@@ -5,7 +5,6 @@ import android.os.Bundle
 import android.graphics.Color
 import android.graphics.Typeface
 import android.view.Gravity
-import android.view.View
 import android.widget.Button
 import android.widget.EditText
 import android.widget.LinearLayout
@@ -16,13 +15,13 @@ class MainActivity : Activity() {
     private val bg = Color.rgb(30, 30, 30)
     private val panel = Color.rgb(37, 37, 38)
     private val panel2 = Color.rgb(45, 45, 48)
-    private val text = Color.rgb(230, 230, 230)
+    private val textColor = Color.rgb(230, 230, 230)
     private val muted = Color.rgb(150, 150, 150)
     private val accent = Color.rgb(70, 130, 180)
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
-    private fun label(value: String, size: Float = 14f, color: Int = text): TextView = TextView(this).apply {
+    private fun label(value: String, size: Float = 14f, color: Int = textColor): TextView = TextView(this).apply {
         text = value
         textSize = size
         setTextColor(color)
@@ -33,7 +32,7 @@ class MainActivity : Activity() {
         text = value
         textSize = 12f
         isAllCaps = false
-        setTextColor(text)
+        setTextColor(textColor)
         setPadding(dp(8), 0, dp(8), 0)
         minHeight = dp(40)
         minimumHeight = dp(40)
@@ -49,7 +48,6 @@ class MainActivity : Activity() {
             setBackgroundColor(bg)
         }
 
-        // Top IDE toolbar
         val toolbar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -63,7 +61,6 @@ class MainActivity : Activity() {
         toolbar.addView(button("⋮"), LinearLayout.LayoutParams(dp(48), dp(42)))
         root.addView(toolbar, LinearLayout.LayoutParams(-1, dp(52)))
 
-        // Main IDE area: project tree + editor
         val main = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
 
         val projectPanel = LinearLayout(this).apply {
@@ -88,12 +85,9 @@ class MainActivity : Activity() {
         val project = label("▾  AndroidStudioForAndroid", 14f)
         project.setPadding(dp(4), 0, 0, 0)
         tree.addView(project, LinearLayout.LayoutParams(-1, dp(38)))
-        val app = label("    ▾  app", 14f)
-        tree.addView(app, LinearLayout.LayoutParams(-1, dp(34)))
-        val src = label("        ▾  src", 14f)
-        tree.addView(src, LinearLayout.LayoutParams(-1, dp(34)))
-        val mainFolder = label("            ▾  main", 14f)
-        tree.addView(mainFolder, LinearLayout.LayoutParams(-1, dp(34)))
+        tree.addView(label("    ▾  app", 14f), LinearLayout.LayoutParams(-1, dp(34)))
+        tree.addView(label("        ▾  src", 14f), LinearLayout.LayoutParams(-1, dp(34)))
+        tree.addView(label("            ▾  main", 14f), LinearLayout.LayoutParams(-1, dp(34)))
 
         val mainFile = label("                Kotlin  MainActivity.kt", 13f)
         mainFile.setPadding(dp(4), 0, 0, 0)
@@ -129,7 +123,7 @@ class MainActivity : Activity() {
     }
 }
 """)
-            setTextColor(text)
+            setTextColor(textColor)
             setHintTextColor(muted)
             textSize = 14f
             typeface = Typeface.MONOSPACE
@@ -149,7 +143,6 @@ class MainActivity : Activity() {
         main.addView(editorArea, LinearLayout.LayoutParams(0, -1, 1f))
         root.addView(main, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        // Small interactions for the first shell milestone.
         mainFile.setOnClickListener { editor.requestFocus() }
         runButton.setOnClickListener { status.text = "  Run requested     Build engine: not implemented yet     Ready" }
         newButton.setOnClickListener { status.text = "  New file requested     File manager: coming next" }
