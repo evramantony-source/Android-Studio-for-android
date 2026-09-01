@@ -11,8 +11,21 @@ android {
         applicationId = "com.evram.androidstudio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 4
-        versionName = "0.1.3"
+        versionCode = 5
+        versionName = "0.1.4"
+    }
+
+    signingConfigs {
+        create("release") {
+            // Release signing will be configured with a persistent private key later.
+        }
+    }
+
+    buildTypes {
+        release {
+            isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
+        }
     }
 
     compileOptions {
