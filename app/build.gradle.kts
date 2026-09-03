@@ -11,8 +11,8 @@ android {
         applicationId = "com.evram.androidstudio"
         minSdk = 26
         targetSdk = 35
-        versionCode = 8
-        versionName = "0.1.7"
+        versionCode = 9
+        versionName = "0.1.8"
     }
 
     compileOptions {
@@ -23,4 +23,8 @@ android {
     kotlinOptions {
         jvmTarget = "17"
     }
+}
+
+dependencies {
+    implementation("androidx.documentfile:documentfile:1.0.1")
 }
