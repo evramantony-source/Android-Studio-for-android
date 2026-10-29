@@ -13,6 +13,12 @@ import android.view.Gravity
 import android.widget.*
 import androidx.documentfile.provider.DocumentFile
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
+import java.net.URLEncoder
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.Executors
+import org.json.JSONObject
 
 class MainActivity : Activity() {
     private val bg=Color.rgb(30,30,30); private val panel=Color.rgb(37,37,38); private val panel2=Color.rgb(45,45,48); private val fgColor=Color.rgb(230,230,230); private val muted=Color.rgb(150,150,150)
@@ -76,7 +82,7 @@ class MainActivity : Activity() {
 
     private fun showProjectSettings(name:String){val f=projectDir(name).resolve("project.properties");val props=f.takeIf{it.exists()}?.readLines()?.mapNotNull{it.split("=",limit=2).takeIf{p->p.size==2}?.let{p->p[0] to p[1]}}?.toMap()?:emptyMap();val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),0,dp(16),0)};val fields=linkedMapOf<String,EditText>();listOf("name","package","minSdk","targetSdk","compileSdk","template").forEach{key->val e=EditText(this).apply{hint=key;setText(props[key]?:(if(key=="name")name else ""))};fields[key]=e;box.addView(e)};AlertDialog.Builder(this).setTitle("Project Settings").setView(box).setNegativeButton("Cancel",null).setPositiveButton("Save"){_,_->f.parentFile?.mkdirs();f.writeText(fields.entries.joinToString("\n"){(k,e)->"$k=${e.text}"}+"\n");status.text="  Saved settings for $name"}.show()}
 
-    private fun openWorkspace(projectName:String){prefs().edit().putString("last",projectName).apply();currentFile=null;dirty=false;pending.clear();val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(bg)};val bar=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setBackgroundColor(panel2)};val back=btn("← Projects");bar.addView(back,LinearLayout.LayoutParams(dp(105),dp(48)));bar.addView(tv("  📁 $projectName",16f),LinearLayout.LayoutParams(0,dp(48),1f));val run=btn("▶ Run");bar.addView(run,LinearLayout.LayoutParams(dp(75),dp(48)));run.setOnClickListener{Toast.makeText(this,"Build engine coming later",Toast.LENGTH_SHORT).show()};root.addView(bar)
+    private fun openWorkspace(projectName:String){prefs().edit().putString("last",projectName).apply();currentFile=null;dirty=false;pending.clear();val root=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(bg)};val bar=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL;setBackgroundColor(panel2)};val back=btn("← Projects");bar.addView(back,LinearLayout.LayoutParams(dp(105),dp(48)));bar.addView(tv("  📁 $projectName",16f),LinearLayout.LayoutParams(0,dp(48),1f));val run=btn("Build");bar.addView(run,LinearLayout.LayoutParams(dp(75),dp(48)));run.setOnClickListener{showBuildInfo(projectName)};val gemini=btn("Gemini");bar.addView(gemini,LinearLayout.LayoutParams(dp(90),dp(48)));gemini.setOnClickListener{showGeminiDialog()};root.addView(bar)
         val body=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL};val tree=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setBackgroundColor(panel);setPadding(dp(8),dp(8),dp(8),dp(8))};val header=LinearLayout(this).apply{orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL};header.addView(tv("PROJECT",12f,muted),LinearLayout.LayoutParams(0,dp(42),1f));val add=btn("＋");header.addView(add,LinearLayout.LayoutParams(dp(50),dp(42)));val refresh=btn("↻");header.addView(refresh,LinearLayout.LayoutParams(dp(50),dp(42)));tree.addView(header);val dir=projectDir(projectName);dir.mkdirs();renderTree(tree,dir,"",projectName)
         val area=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL};val tab=tv("  No file selected",13f);tab.setBackgroundColor(panel2);area.addView(tab,LinearLayout.LayoutParams(-1,dp(42)));editor=EditText(this).apply{setTextColor(fgColor);setHintTextColor(muted);textSize=14f;typeface=Typeface.MONOSPACE;gravity=Gravity.TOP or Gravity.START;setPadding(dp(16),dp(12),dp(16),dp(12));setBackgroundColor(bg);hint="Select a file to edit";isSingleLine=false};editor?.addTextChangedListener(object:TextWatcher{override fun beforeTextChanged(s:CharSequence?,st:Int,c:Int,a:Int){};override fun onTextChanged(s:CharSequence?,st:Int,b:Int,c:Int){if(currentFile!=null){dirty=true;tab.text="  ${currentFile!!.name} *"}};override fun afterTextChanged(e:Editable?) {}});area.addView(editor,LinearLayout.LayoutParams(-1,0,1f));val save=btn("💾 Save");save.setOnClickListener{saveCurrent(tab)};area.addView(save,LinearLayout.LayoutParams(-1,dp(46)));body.addView(ScrollView(this).apply{addView(tree)},LinearLayout.LayoutParams(dp(320),-1));body.addView(area,LinearLayout.LayoutParams(0,-1,1f));root.addView(body,LinearLayout.LayoutParams(-1,0,1f));status=tv("  $projectName ready",12f,muted);status.setBackgroundColor(panel2);root.addView(status,LinearLayout.LayoutParams(-1,dp(30)));back.setOnClickListener{if(dirty)confirmLeave{showManager()}else showManager()};add.setOnClickListener{showNewItemDialog(projectName,tree)};refresh.setOnClickListener{refreshTree(tree,projectName)};setContentView(root)}
 
@@ -89,5 +95,60 @@ class MainActivity : Activity() {
     private fun showFileActions(f:File,projectName:String,tree:LinearLayout){AlertDialog.Builder(this).setTitle(f.name).setItems(arrayOf("Rename","Delete")){_,which->if(which==0)renameFile(f,projectName,tree)else deleteFile(f,projectName,tree)}.show()}
     private fun renameFile(f:File,projectName:String,tree:LinearLayout){val input=EditText(this).apply{setText(f.name)};AlertDialog.Builder(this).setTitle("Rename").setView(input).setNegativeButton("Cancel",null).setPositiveButton("Rename"){_,_->val n=input.text.toString().trim();if(n.isNotEmpty()&&n!=f.name){val dest=File(f.parentFile,n);if(dest.exists())Toast.makeText(this,"Already exists",Toast.LENGTH_SHORT).show()else if(f.renameTo(dest)){if(currentFile?.absolutePath==f.absolutePath)currentFile=dest;refreshTree(tree,projectName)}}}.show()}
     private fun deleteFile(f:File,projectName:String,tree:LinearLayout){AlertDialog.Builder(this).setTitle("Delete ${f.name}?").setNegativeButton("Cancel",null).setPositiveButton("Delete"){_,_->if(f.deleteRecursively()){if(currentFile?.absolutePath==f.absolutePath){currentFile=null;editor?.setText("");dirty=false};refreshTree(tree,projectName)}}.show()}
-    private fun showNewItemDialog(projectName:String,tree:LinearLayout){val input=EditText(this).apply{hint="Name (folders can use /)"};AlertDialog.Builder(this).setTitle("New item").setView(input).setItems(arrayOf("Create file","Create folder")){_,which->val n=input.text.toString().trim();if(n.isEmpty())Toast.makeText(this,"Enter a name",Toast.LENGTH_SHORT).show()else{val f=File(projectDir(projectName),n);if(f.exists())Toast.makeText(this,"Already exists",Toast.LENGTH_SHORT).show()else{if(which==0){f.parentFile?.mkdirs();f.createNewFile()}else f.mkdirs();refreshTree(tree,projectName);Toast.makeText(this,"Created $n",Toast.LENGTH_SHORT).show()}}}.show()}
+    private fun showNewItemDialog(projectName:String,tree:LinearLayout){
+        val input=EditText(this).apply{hint="Name (folders can use /)";setSingleLine(true)}
+        AlertDialog.Builder(this).setTitle("New item").setView(input).setNegativeButton("Cancel",null)
+            .setNeutralButton("New folder"){_,_->createProjectItem(projectName,tree,input.text.toString(),true)}
+            .setPositiveButton("New file"){_,_->createProjectItem(projectName,tree,input.text.toString(),false)}.show()
+    }
+    private fun createProjectItem(projectName:String,tree:LinearLayout,name:String,folder:Boolean){
+        val n=name.trim()
+        if(n.isEmpty()){Toast.makeText(this,"Enter a name",Toast.LENGTH_SHORT).show();return}
+        val root=projectDir(projectName).canonicalFile
+        val target=File(root,n).canonicalFile
+        if(!target.toPath().startsWith(root.toPath())){Toast.makeText(this,"Invalid path",Toast.LENGTH_SHORT).show();return}
+        if(target.exists()){Toast.makeText(this,"Already exists",Toast.LENGTH_SHORT).show();return}
+        val ok=if(folder)target.mkdirs() else {target.parentFile?.mkdirs();target.createNewFile()}
+        if(ok){refreshTree(tree,projectName);if(!folder)openFile(target);Toast.makeText(this,"Created $n",Toast.LENGTH_SHORT).show()}
+    }
+    private fun showBuildInfo(projectName:String){
+        AlertDialog.Builder(this).setTitle("Build APK")
+            .setMessage("The app can edit and manage project files. APK compilation needs an Android build service (Gradle and the Android SDK); this install currently has no on-device compiler configured. The included GitHub Actions workflow builds this IDE app and publishes its debug APK.")
+            .setPositiveButton("OK",null).show()
+    }
+    private fun showGeminiDialog(){
+        val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(16),0,dp(16),0)}
+        val question=EditText(this).apply{hint="Ask Gemini to explain, generate, or edit code";minLines=2;gravity=Gravity.TOP}
+        val key=EditText(this).apply{hint="Gemini API key";inputType=129;setText(getSharedPreferences("ai",MODE_PRIVATE).getString("gemini_key",""))}
+        box.addView(question);box.addView(key)
+        AlertDialog.Builder(this).setTitle("Gemini Assistant").setView(box).setNegativeButton("Cancel",null)
+            .setPositiveButton("Send"){_,_->val q=question.text.toString().trim();val k=key.text.toString().trim();if(q.isEmpty()||k.isEmpty()){Toast.makeText(this,"Enter a prompt and API key",Toast.LENGTH_SHORT).show()}else{getSharedPreferences("ai",MODE_PRIVATE).edit().putString("gemini_key",k).apply();requestGemini(q,k)}}.show()
+    }
+    private fun requestGemini(question:String,key:String){
+        val file=currentFile
+        val source=editor?.text?.toString().orEmpty()
+        status.text="  Gemini is working…"
+        Executors.newSingleThreadExecutor().execute{
+            try{
+                val prompt=question+"\\n\\nCurrent file: "+(file?.name?:"none")+"\\n\\n"+source
+                val body=JSONObject().put("contents",org.json.JSONArray().put(JSONObject().put("parts",org.json.JSONArray().put(JSONObject().put("text",prompt))))).toString()
+                val url=URL("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key="+URLEncoder.encode(key,"UTF-8"))
+                val conn=(url.openConnection() as HttpURLConnection).apply{requestMethod="POST";connectTimeout=20000;readTimeout=60000;doOutput=true;setRequestProperty("Content-Type","application/json; charset=utf-8")}
+                conn.outputStream.use{it.write(body.toByteArray(StandardCharsets.UTF_8))}
+                val stream=if(conn.responseCode in 200..299)conn.inputStream else conn.errorStream
+                val response=stream.bufferedReader().use{it.readText()}
+                if(conn.responseCode !in 200..299)throw IllegalStateException("Gemini HTTP "+conn.responseCode+": "+response.take(500))
+                val answer=JSONObject(response).getJSONArray("candidates").getJSONObject(0).getJSONObject("content").getJSONArray("parts").getJSONObject(0).getString("text")
+                runOnUiThread{showGeminiResult(answer)}
+                conn.disconnect()
+            }catch(e:Exception){runOnUiThread{status.text="  Gemini error: "+(e.message?:e.javaClass.simpleName)}}
+        }
+    }
+    private fun showGeminiResult(answer:String){
+        val cleaned=answer.trim().removePrefix("```kotlin").removePrefix("```java").removePrefix("```").removeSuffix("```").trim()
+        AlertDialog.Builder(this).setTitle("Gemini response").setMessage(answer)
+            .setNeutralButton("Insert in editor"){_,_->editor?.append(cleaned);dirty=true}
+            .setPositiveButton("Close",null).show()
+        status.text="  Gemini response ready"
+    }
 }
