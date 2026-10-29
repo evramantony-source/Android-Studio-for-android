@@ -4,6 +4,11 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      project_archive_url:
+        description: Optional URL to a ZIP Android project to build
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -15,31 +20,36 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Set up JDK 17
+      - name: Set up JDK
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-          cache: gradle
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          cmdline-tools-version: 'latest'
 
-      - name: Install Android SDK packages
-        run: sdkmanager --install "platforms;android-35" "build-tools;35.0.0"
+      - name: Install Android SDK
+        run: yes | sdkmanager --licenses >/dev/null
+      - run: sdkmanager "platforms;android-35" "build-tools;35.0.0"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
 
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace --no-daemon
+      - name: Build APK
+        run: gradle --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify APK
+        run: test -s app/build/outputs/apk/debug/app-debug.apk
 
       - name: Upload debug APK
-        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: AndroidStudioForAndroid-debug
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 30
