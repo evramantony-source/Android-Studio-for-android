@@ -123,6 +123,8 @@ class OfflineApkBuilder(
                 add("-proc:none")
                 add("-encoding")
                 add("UTF-8")
+                add("-bootclasspath")
+                add(stubsJar.absolutePath)
                 add("-classpath")
                 add(stubsJar.absolutePath)
                 add("-d")
@@ -217,10 +219,11 @@ class OfflineApkBuilder(
                 apkEntries = entries,
                 signerSubject = signerConfig.certificates.firstOrNull()?.subjectX500Principal?.name.orEmpty(),
             )
-        } catch (e: Exception) {
-            logs.add("✖ Build crashed: ${e.javaClass.simpleName}: ${e.localizedMessage}")
+        } catch (t: Throwable) {
+            if (t is kotlinx.coroutines.CancellationException) throw t
+            logs.add("✖ Build error: ${t.javaClass.simpleName}: ${t.localizedMessage}")
             diagnostics.add(
-                BuildDiagnostic("build", 1, 1, DiagnosticSeverity.ERROR, e.localizedMessage ?: "Unexpected build error"),
+                BuildDiagnostic("build", 1, 1, DiagnosticSeverity.ERROR, t.localizedMessage ?: "Unexpected build error"),
             )
             BuildResult(
                 success = false,
