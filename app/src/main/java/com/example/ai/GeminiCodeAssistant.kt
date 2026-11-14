@@ -620,7 +620,7 @@ class GeminiCodeAssistant {
         fun handlePayload(payload: String, status: Int) {
             val parsed = parseSsePayload(payload)
             if (parsed.errorMessage != null) {
-                throw GeminiApiException(status, parsed.errorMessage)
+                throw GeminiApiException(parsed.errorCode ?: status, parsed.errorMessage)
             }
             if (!parsed.blockReason.isNullOrBlank()) blockReason = parsed.blockReason
             if (!parsed.finishReason.isNullOrBlank()) finishReason = parsed.finishReason
@@ -751,7 +751,7 @@ class GeminiCodeAssistant {
 
             val parsed = parseSsePayload(rawResponse)
             if (parsed.errorMessage != null) {
-                throw GeminiApiException(status, parsed.errorMessage)
+                throw GeminiApiException(parsed.errorCode ?: status, parsed.errorMessage)
             }
             if (parsed.text.isNotEmpty()) {
                 onText(parsed.text)
@@ -1035,6 +1035,7 @@ class GeminiCodeAssistant {
         val blockReason: String? = null,
         val finishReason: String? = null,
         val errorMessage: String? = null,
+        val errorCode: Int? = null,
     )
 
     internal companion object {
@@ -1090,7 +1091,11 @@ class GeminiCodeAssistant {
                 val root = JSONObject(jsonPayload)
                 val err = root.optJSONObject("error")
                 if (err != null) {
-                    return SseParseResult(errorMessage = err.optString("message", "Unknown API error"))
+                    val code = if (err.has("code")) err.optInt("code") else null
+                    return SseParseResult(
+                        errorMessage = err.optString("message", "Unknown API error"),
+                        errorCode = code,
+                    )
                 }
 
                 val promptFeedback = root.optJSONObject("promptFeedback")

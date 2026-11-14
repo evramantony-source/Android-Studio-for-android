@@ -123,4 +123,14 @@ class GeminiCodeAssistantTest {
         assertEquals(false, GeminiCodeAssistant.isTransientHttpStatus(400))
         assertEquals(false, GeminiCodeAssistant.isTransientHttpStatus(404))
     }
+
+    @Test
+    fun parseSsePayload_extractsEmbeddedErrorCode() {
+        val json = """
+            {"error": {"code": 503, "message": "high demand"}}
+        """.trimIndent()
+        val parsed = GeminiCodeAssistant.parseSsePayload(json)
+        assertEquals(503, parsed.errorCode)
+        assertEquals("high demand", parsed.errorMessage)
+    }
 }

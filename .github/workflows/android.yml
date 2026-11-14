@@ -7,6 +7,9 @@ on:
     branches: [ main, master ]
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     name: Build & Test DroidForge Studio
@@ -82,3 +85,23 @@ jobs:
           name: droidforge-studio-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Publish rolling APK release for direct mobile download
+        if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk droidforge-studio-debug.apk
+          if gh release view latest-debug >/dev/null 2>&1; then
+            gh release upload latest-debug droidforge-studio-debug.apk --clobber || true
+          else
+            gh release create latest-debug droidforge-studio-debug.apk \
+              --title "DroidForge Studio (Latest Debug APK)" \
+              --notes "Latest automated debug APK build from commit ${GITHUB_SHA::7}." \
+              --prerelease || true
+          fi
+          {
+            echo "### DroidForge Studio APK Ready"
+            echo "- **Direct Mobile APK Download (Releases):** https://github.com/${{ github.repository }}/releases/tag/latest-debug"
+            echo "- **Workflow Artifact:** Scroll right on the Artifacts table or use Desktop mode to download \`droidforge-studio-debug-apk\`."
+          } >> "$GITHUB_STEP_SUMMARY"
