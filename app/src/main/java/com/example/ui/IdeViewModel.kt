@@ -321,9 +321,9 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
 
-        override suspend fun listFiles(includeBuild: Boolean): AgentToolResult {
+        override suspend fun listFiles(): AgentToolResult {
             flushInMemoryFiles()
-            val paths = repository.listAllProjectPaths(projectId, includeBuild = includeBuild)
+            val paths = repository.listAllProjectPaths(projectId, includeBuild = false)
             val arr = JSONArray().apply { paths.forEach { put(it) } }
             return AgentToolResult(
                 success = true,

@@ -60,10 +60,19 @@ jobs:
           fi
           keytool -list -keystore debug.keystore -storepass android -alias androiddebugkey
 
-      - name: Configure .env from GitHub Secret if provided
+      - name: Cache Robolectric Android SDK jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: robolectric-m2-sdk36
+
+      - name: Configure .env and .env.example if needed
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
+          if [ ! -f .env.example ]; then
+            printf 'GEMINI_API_KEY=GEMINI_API_KEY_DEFAULT_VALUE\n' > .env.example
+          fi
           if [ -n "$GEMINI_API_KEY" ]; then
             printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" > .env
           fi
@@ -74,10 +83,10 @@ jobs:
           gradle-version: '9.3.1'
 
       - name: Run unit & Robolectric tests
-        run: gradle :app:testDebugUnitTest --no-daemon -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
 
       - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
+        run: gradle :app:assembleDebug --no-daemon --stacktrace -Dorg.gradle.jvmargs="-Xmx3g -Dfile.encoding=UTF-8"
 
       - name: Upload Debug APK artifact
         uses: actions/upload-artifact@v4
