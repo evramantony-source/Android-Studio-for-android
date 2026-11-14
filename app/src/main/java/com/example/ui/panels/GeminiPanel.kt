@@ -25,6 +25,10 @@ import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.VisibilityOff
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -35,6 +39,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -45,10 +50,14 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.ai.AiUiState
 import com.example.ai.ChatMessage
+import com.example.ai.GEMINI_MODEL_ID
+import com.example.ai.GeminiCodeAssistant
 import com.example.ai.SuggestedCodeBlock
 import com.example.model.BuildDiagnostic
 import com.example.ui.theme.JetBrainsMonoFontFamily
@@ -56,17 +65,24 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
 @Composable
 fun GeminiPanel(
     activeFileName: String?,
+    customApiKey: String,
     diagnostics: List<BuildDiagnostic>,
     messages: List<ChatMessage>,
     aiState: AiUiState,
     onSendPrompt: (String) -> Unit,
+    onSaveApiKey: (String) -> Unit,
     onApplyCode: (SuggestedCodeBlock) -> Unit,
     onClearChat: () -> Unit,
     onClose: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var promptInput by remember { mutableStateOf("") }
+    var showApiKeyDialog by remember { mutableStateOf(false) }
     val listState = rememberLazyListState()
+
+    val hasEffectiveKey = remember(customApiKey) {
+        GeminiCodeAssistant.resolveApiKey(customApiKey).isNotEmpty()
+    }
 
     LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
         if (messages.isNotEmpty()) {
@@ -100,11 +116,37 @@ fun GeminiPanel(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = activeFileName?.let { "Context: $it" } ?: "Ready (online required for AI)",
+                        text = buildString {
+                            append(GEMINI_MODEL_ID)
+                            append(" • ")
+                            when {
+                                !hasEffectiveKey -> append("API key needed")
+                                activeFileName != null -> append(activeFileName)
+                                else -> append("Ready")
+                            }
+                        },
                         style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (hasEffectiveKey) {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                IconButton(
+                    onClick = { showApiKeyDialog = true },
+                    modifier = Modifier.testTag("gemini_api_key_button"),
+                ) {
+                    Icon(
+                        Icons.Default.Key,
+                        contentDescription = "Configure Gemini API key",
+                        tint = if (hasEffectiveKey) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.error
+                        },
                     )
                 }
                 if (messages.isNotEmpty()) {
@@ -167,7 +209,41 @@ fun GeminiPanel(
                     .padding(horizontal = 12.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp),
             ) {
-                if (messages.isEmpty()) {
+                if (!hasEffectiveKey) {
+                    item {
+                        Surface(
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 8.dp),
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
+                            ) {
+                                Text(
+                                    text = "Connect Gemini API Key",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                                Text(
+                                    text = "Add your Google AI Studio Gemini API key to use $GEMINI_MODEL_ID directly from your phone, or set GEMINI_API_KEY in AI Studio / GitHub Secrets.",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                                Button(
+                                    onClick = { showApiKeyDialog = true },
+                                    modifier = Modifier.testTag("open_api_key_dialog_button"),
+                                ) {
+                                    Icon(Icons.Default.Key, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(Modifier.width(6.dp))
+                                    Text("Set API Key")
+                                }
+                            }
+                        }
+                    }
+                } else if (messages.isEmpty()) {
                     item {
                         Surface(
                             color = MaterialTheme.colorScheme.surfaceContainer,
@@ -181,7 +257,7 @@ fun GeminiPanel(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 Text(
-                                    text = "Android Java Coding Copilot",
+                                    text = "Android Java Copilot ($GEMINI_MODEL_ID)",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
@@ -245,7 +321,7 @@ fun GeminiPanel(
                 OutlinedTextField(
                     value = promptInput,
                     onValueChange = { promptInput = it },
-                    placeholder = { Text("Ask Gemini to write or fix code...") },
+                    placeholder = { Text("Ask $GEMINI_MODEL_ID to write or fix code...") },
                     maxLines = 3,
                     modifier = Modifier
                         .weight(1f)
@@ -254,6 +330,10 @@ fun GeminiPanel(
                 val isBusy = aiState is AiUiState.Streaming
                 IconButton(
                     onClick = {
+                        if (!hasEffectiveKey) {
+                            showApiKeyDialog = true
+                            return@IconButton
+                        }
                         val p = promptInput.trim()
                         if (p.isNotEmpty() && !isBusy) {
                             promptInput = ""
@@ -272,6 +352,94 @@ fun GeminiPanel(
             }
         }
     }
+
+    if (showApiKeyDialog) {
+        GeminiApiKeyDialog(
+            currentCustomKey = customApiKey,
+            hasBuiltInKey = GeminiCodeAssistant.hasBuiltInApiKey(),
+            onSave = { newKey ->
+                showApiKeyDialog = false
+                onSaveApiKey(newKey)
+            },
+            onDismiss = { showApiKeyDialog = false },
+        )
+    }
+}
+
+@Composable
+private fun GeminiApiKeyDialog(
+    currentCustomKey: String,
+    hasBuiltInKey: Boolean,
+    onSave: (String) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var keyInput by remember(currentCustomKey) { mutableStateOf(currentCustomKey) }
+    var revealKey by remember { mutableStateOf(false) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Gemini API Key") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text(
+                    text = "Model: $GEMINI_MODEL_ID",
+                    fontFamily = JetBrainsMonoFontFamily,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+                Text(
+                    text = when {
+                        currentCustomKey.isNotBlank() ->
+                            "Using your custom API key saved securely on this device."
+                        hasBuiltInKey ->
+                            "Using the GEMINI_API_KEY configured at build time. Paste a key below to override it."
+                        else ->
+                            "Paste your Google AI Studio Gemini API key below. It stays saved locally on this device."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                OutlinedTextField(
+                    value = keyInput,
+                    onValueChange = { keyInput = it },
+                    label = { Text("AIza...") },
+                    singleLine = true,
+                    visualTransformation = if (revealKey) VisualTransformation.None else PasswordVisualTransformation(),
+                    trailingIcon = {
+                        IconButton(onClick = { revealKey = !revealKey }) {
+                            Icon(
+                                imageVector = if (revealKey) Icons.Default.VisibilityOff else Icons.Default.Visibility,
+                                contentDescription = if (revealKey) "Hide API key" else "Show API key",
+                            )
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("gemini_api_key_input"),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSave(keyInput) },
+                modifier = Modifier.testTag("save_gemini_api_key_button"),
+            ) {
+                Text("Save")
+            }
+        },
+        dismissButton = {
+            Row {
+                if (currentCustomKey.isNotBlank()) {
+                    TextButton(onClick = { onSave("") }) {
+                        Text("Clear")
+                    }
+                }
+                TextButton(onClick = onDismiss) {
+                    Text("Cancel")
+                }
+            }
+        },
+    )
 }
 
 @Composable

@@ -7,7 +7,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.getValue
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.example.ai.configureAppCheck
 import com.example.ui.IdeViewModel
 import com.example.ui.screens.IdeWorkspaceScreen
 import com.example.ui.screens.ProjectsScreen
@@ -16,9 +15,6 @@ import com.example.ui.theme.DroidForgeTheme
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
-        // Configure Firebase App Check with launch intent before any UI, ViewModels, or AI operations.
-        configureAppCheck(this, intent)
 
         enableEdgeToEdge()
         setContent {
@@ -34,6 +30,7 @@ class MainActivity : ComponentActivity() {
             val lastBuildResult by viewModel.lastBuildResult.collectAsStateWithLifecycle()
             val jumpToLine by viewModel.jumpToLine.collectAsStateWithLifecycle()
             val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
+            val customGeminiApiKey by viewModel.customGeminiApiKey.collectAsStateWithLifecycle()
             val aiMessages by viewModel.aiMessages.collectAsStateWithLifecycle()
             val aiState by viewModel.aiState.collectAsStateWithLifecycle()
 
@@ -60,6 +57,7 @@ class MainActivity : ComponentActivity() {
                         lastBuildResult = lastBuildResult,
                         jumpToLine = jumpToLine,
                         statusBanner = statusBanner,
+                        customGeminiApiKey = customGeminiApiKey,
                         aiMessages = aiMessages,
                         aiState = aiState,
                         onSelectFile = viewModel::openFile,
@@ -73,6 +71,7 @@ class MainActivity : ComponentActivity() {
                         onExportApkUri = viewModel::exportApkToUri,
                         onClearStatusBanner = viewModel::clearStatusBanner,
                         onAskGemini = viewModel::askGemini,
+                        onSaveGeminiApiKey = viewModel::saveCustomGeminiApiKey,
                         onApplyGeminiCode = viewModel::applySuggestedCode,
                         onClearAiChat = viewModel::clearAiChat,
                         onUpdateSettings = viewModel::updateEditorSettings,

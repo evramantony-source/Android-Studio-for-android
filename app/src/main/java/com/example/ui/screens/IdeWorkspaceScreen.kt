@@ -109,6 +109,7 @@ fun IdeWorkspaceScreen(
     lastBuildResult: BuildResult?,
     jumpToLine: Pair<String, Int>?,
     statusBanner: String?,
+    customGeminiApiKey: String,
     aiMessages: List<ChatMessage>,
     aiState: AiUiState,
     onSelectFile: (String) -> Unit,
@@ -122,6 +123,7 @@ fun IdeWorkspaceScreen(
     onExportApkUri: (android.net.Uri) -> Unit,
     onClearStatusBanner: () -> Unit,
     onAskGemini: (String) -> Unit,
+    onSaveGeminiApiKey: (String) -> Unit,
     onApplyGeminiCode: (SuggestedCodeBlock) -> Unit,
     onClearAiChat: () -> Unit,
     onUpdateSettings: ((EditorSettings) -> EditorSettings) -> Unit,
@@ -453,10 +455,12 @@ fun IdeWorkspaceScreen(
                         VerticalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         GeminiPanel(
                             activeFileName = activeFile?.relativePath,
+                            customApiKey = customGeminiApiKey,
                             diagnostics = lastBuildResult?.diagnostics.orEmpty(),
                             messages = aiMessages,
                             aiState = aiState,
                             onSendPrompt = onAskGemini,
+                            onSaveApiKey = onSaveGeminiApiKey,
                             onApplyCode = onApplyGeminiCode,
                             onClearChat = onClearAiChat,
                             onClose = { showGeminiPanel = false },
@@ -504,10 +508,12 @@ fun IdeWorkspaceScreen(
                     Box(modifier = Modifier.height(540.dp)) {
                         GeminiPanel(
                             activeFileName = activeFile?.relativePath,
+                            customApiKey = customGeminiApiKey,
                             diagnostics = lastBuildResult?.diagnostics.orEmpty(),
                             messages = aiMessages,
                             aiState = aiState,
                             onSendPrompt = onAskGemini,
+                            onSaveApiKey = onSaveGeminiApiKey,
                             onApplyCode = onApplyGeminiCode,
                             onClearChat = onClearAiChat,
                             onClose = { showGeminiPanel = false },

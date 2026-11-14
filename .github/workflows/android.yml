@@ -57,19 +57,12 @@ jobs:
           fi
           keytool -list -keystore debug.keystore -storepass android -alias androiddebugkey
 
-      - name: Restore google-services.json if provided via Secret
+      - name: Configure .env from GitHub Secret if provided
         env:
-          GOOGLE_SERVICES_JSON: ${{ secrets.GOOGLE_SERVICES_JSON }}
-          GOOGLE_SERVICES_JSON_BASE64: ${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          if [ ! -f app/google-services.json ]; then
-            if [ -n "$GOOGLE_SERVICES_JSON" ]; then
-              printf '%s' "$GOOGLE_SERVICES_JSON" > app/google-services.json
-            elif [ -n "$GOOGLE_SERVICES_JSON_BASE64" ]; then
-              echo "$GOOGLE_SERVICES_JSON_BASE64" | base64 -d > app/google-services.json
-            else
-              echo "::warning::app/google-services.json is missing; Gemini AI features will be disabled in this CI APK."
-            fi
+          if [ -n "$GEMINI_API_KEY" ]; then
+            printf 'GEMINI_API_KEY=%s\n' "$GEMINI_API_KEY" > .env
           fi
 
       - name: Set up Gradle 9.3.1

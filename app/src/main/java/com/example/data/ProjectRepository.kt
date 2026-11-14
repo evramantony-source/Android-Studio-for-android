@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.datastore.preferences.core.booleanPreferencesKey
 import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
+import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.model.EditorSettings
 import com.example.model.FileLanguage
@@ -31,6 +32,22 @@ class ProjectRepository(
         val WORD_WRAP = booleanPreferencesKey("editor_word_wrap")
         val AUTO_INDENT = booleanPreferencesKey("editor_auto_indent")
         val DARK_THEME = booleanPreferencesKey("editor_dark_theme")
+        val CUSTOM_GEMINI_API_KEY = stringPreferencesKey("custom_gemini_api_key")
+    }
+
+    val customGeminiApiKey: Flow<String> = context.editorDataStore.data.map { prefs ->
+        prefs[PrefKeys.CUSTOM_GEMINI_API_KEY].orEmpty()
+    }
+
+    suspend fun saveCustomGeminiApiKey(apiKey: String) {
+        context.editorDataStore.edit { prefs ->
+            val cleaned = apiKey.trim()
+            if (cleaned.isEmpty()) {
+                prefs.remove(PrefKeys.CUSTOM_GEMINI_API_KEY)
+            } else {
+                prefs[PrefKeys.CUSTOM_GEMINI_API_KEY] = cleaned
+            }
+        }
     }
 
     val editorSettings: Flow<EditorSettings> = context.editorDataStore.data.map { prefs ->

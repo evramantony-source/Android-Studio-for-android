@@ -70,6 +70,12 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         initialValue = EditorSettings(),
     )
 
+    val customGeminiApiKey: StateFlow<String> = repository.customGeminiApiKey.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = "",
+    )
+
     val aiMessages: StateFlow<List<ChatMessage>> = geminiAssistant.messages
     val aiState: StateFlow<AiUiState> = geminiAssistant.uiState
 
@@ -261,15 +267,28 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         val project = _activeProject.value ?: return
         val active = _projectFiles.value.find { it.relativePath == _activeFilePath.value }
         val diagnostics = _lastBuildResult.value?.diagnostics.orEmpty()
+        val apiKey = customGeminiApiKey.value
         viewModelScope.launch {
             geminiAssistant.askGemini(
                 userPrompt = prompt,
+                apiKey = apiKey,
                 projectName = project.name,
                 packageName = project.packageName,
                 activeFile = active,
                 allFiles = _projectFiles.value,
                 diagnostics = diagnostics,
             )
+        }
+    }
+
+    fun saveCustomGeminiApiKey(apiKey: String) {
+        viewModelScope.launch {
+            repository.saveCustomGeminiApiKey(apiKey)
+            _statusBanner.value = if (apiKey.isBlank()) {
+                "Cleared custom Gemini API key."
+            } else {
+                "Saved Gemini API key."
+            }
         }
     }
 
