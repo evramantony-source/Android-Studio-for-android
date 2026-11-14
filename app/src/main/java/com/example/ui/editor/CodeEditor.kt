@@ -22,10 +22,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.FormatIndentIncrease
 import androidx.compose.material.icons.automirrored.filled.Redo
 import androidx.compose.material.icons.automirrored.filled.Undo
 import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.FormatIndentIncrease
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -396,7 +396,7 @@ fun CodeEditor(
                     },
                     modifier = Modifier.testTag("editor_format_button"),
                 ) {
-                    Icon(Icons.Default.FormatIndentIncrease, contentDescription = "Auto-indent file")
+                    Icon(Icons.AutoMirrored.Filled.FormatIndentIncrease, contentDescription = "Auto-indent file")
                 }
 
                 Spacer(Modifier.width(4.dp))
