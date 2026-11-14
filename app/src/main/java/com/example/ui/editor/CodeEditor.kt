@@ -99,6 +99,11 @@ fun CodeEditor(
     val verticalScroll = rememberScrollState()
     val horizontalScroll = rememberScrollState()
 
+    LaunchedEffect(filePath) {
+        verticalScroll.scrollTo(0)
+        horizontalScroll.scrollTo(0)
+    }
+
     val lines = remember(textValue.text) { textValue.text.split('\n') }
     val errorLineNumbers = remember(diagnostics, filePath) {
         diagnostics

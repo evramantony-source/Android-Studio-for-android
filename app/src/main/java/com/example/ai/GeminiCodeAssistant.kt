@@ -143,9 +143,13 @@ class GeminiCodeAssistant {
         } catch (e: Exception) {
             Log.e(TAG, "Gemini generation failed", e)
             removeMessageIfBlank(assistantMsgId)
-            _uiState.value = AiUiState.Error(
-                e.localizedMessage ?: "Failed to reach Gemini via Firebase AI Logic.",
-            )
+            val rawMsg = e.localizedMessage.orEmpty()
+            val friendlyMsg = if (rawMsg.contains("Default FirebaseApp is not initialized", ignoreCase = true)) {
+                "Firebase is not configured in this APK (google-services.json was missing during the build). Install the APK exported from AI Studio, or add GOOGLE_SERVICES_JSON to your GitHub Actions Secrets."
+            } else {
+                rawMsg.ifBlank { "Failed to reach Gemini via Firebase AI Logic." }
+            }
+            _uiState.value = AiUiState.Error(friendlyMsg)
         }
     }
 
