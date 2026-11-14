@@ -115,4 +115,12 @@ class GeminiCodeAssistantTest {
         assertTrue(payload.contains("\"edit_file\""))
         assertTrue(payload.contains("\"build_apk\""))
     }
+
+    @Test
+    fun isTransientHttpStatus_retriesOnly5xxServerErrors() {
+        assertTrue(GeminiCodeAssistant.isTransientHttpStatus(503))
+        assertTrue(GeminiCodeAssistant.isTransientHttpStatus(500))
+        assertEquals(false, GeminiCodeAssistant.isTransientHttpStatus(400))
+        assertEquals(false, GeminiCodeAssistant.isTransientHttpStatus(404))
+    }
 }

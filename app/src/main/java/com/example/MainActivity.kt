@@ -73,6 +73,7 @@ class MainActivity : ComponentActivity() {
                         onExportApkUri = viewModel::exportApkToUri,
                         onClearStatusBanner = viewModel::clearStatusBanner,
                         onAskGemini = viewModel::askGemini,
+                        onRetryGemini = viewModel::retryLastGeminiPrompt,
                         onStopGemini = viewModel::cancelGemini,
                         onSaveGeminiConfig = viewModel::saveGeminiConfig,
                         onApplyGeminiCode = viewModel::applySuggestedCode,

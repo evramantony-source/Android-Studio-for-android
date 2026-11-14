@@ -304,6 +304,11 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         geminiAssistant.markCancelled()
     }
 
+    fun retryLastGeminiPrompt() {
+        val lastPrompt = geminiAssistant.popLastPromptForRetry() ?: return
+        askGemini(lastPrompt)
+    }
+
     private fun createToolExecutor(
         projectId: String,
         packageName: String,

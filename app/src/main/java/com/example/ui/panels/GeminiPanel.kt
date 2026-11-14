@@ -31,6 +31,7 @@ import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -38,6 +39,7 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FilterChip
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -79,6 +81,7 @@ fun GeminiPanel(
     messages: List<ChatMessage>,
     aiState: AiUiState,
     onSendPrompt: (String) -> Unit,
+    onRetryGemini: () -> Unit,
     onStopGemini: () -> Unit,
     onSaveGeminiConfig: (apiKey: String, modelId: String) -> Unit,
     onApplyCode: (SuggestedCodeBlock) -> Unit,
@@ -127,7 +130,7 @@ fun GeminiPanel(
                     )
                     Text(
                         text = if (hasEffectiveKey) {
-                            "$geminiModelId • Auto-edit"
+                            geminiModelId
                         } else {
                             "$geminiModelId • Key needed"
                         },
@@ -292,21 +295,53 @@ fun GeminiPanel(
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.fillMaxWidth(),
                         ) {
-                            Row(
+                            Column(
                                 modifier = Modifier.padding(12.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp),
                             ) {
-                                Icon(
-                                    Icons.Default.ErrorOutline,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onErrorContainer,
-                                )
-                                Text(
-                                    text = aiState.message,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onErrorContainer,
-                                )
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                ) {
+                                    Icon(
+                                        Icons.Default.ErrorOutline,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                    Text(
+                                        text = aiState.message,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onErrorContainer,
+                                    )
+                                }
+                                if (aiState.isRetryable || aiState.isModelOverloaded) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        if (aiState.isRetryable) {
+                                            AssistChip(
+                                                onClick = onRetryGemini,
+                                                label = { Text("Retry") },
+                                                leadingIcon = {
+                                                    Icon(
+                                                        Icons.Default.Refresh,
+                                                        contentDescription = null,
+                                                        modifier = Modifier.size(16.dp),
+                                                    )
+                                                },
+                                                modifier = Modifier.testTag("retry_gemini_button"),
+                                            )
+                                        }
+                                        if (aiState.isModelOverloaded) {
+                                            AssistChip(
+                                                onClick = { showApiKeyDialog = true },
+                                                label = { Text("Switch Model") },
+                                                modifier = Modifier.testTag("switch_model_button"),
+                                            )
+                                        }
+                                    }
+                                }
                             }
                         }
                     }
@@ -438,6 +473,20 @@ private fun GeminiApiKeyDialog(
                         .fillMaxWidth()
                         .testTag("gemini_model_id_input"),
                 )
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    listOf(GEMINI_MODEL_ID, "gemini-2.5-flash", "gemini-2.5-pro").forEach { preset ->
+                        FilterChip(
+                            selected = modelInput.trim() == preset,
+                            onClick = { modelInput = preset },
+                            label = { Text(preset, style = MaterialTheme.typography.labelSmall) },
+                        )
+                    }
+                }
             }
         },
         confirmButton = {

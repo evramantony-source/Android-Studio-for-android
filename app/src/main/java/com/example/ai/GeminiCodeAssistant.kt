@@ -8,6 +8,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -63,7 +64,11 @@ data class ChatMessage(
 sealed interface AiUiState {
     data object Idle : AiUiState
     data object Streaming : AiUiState
-    data class Error(val message: String) : AiUiState
+    data class Error(
+        val message: String,
+        val isRetryable: Boolean = true,
+        val isModelOverloaded: Boolean = false,
+    ) : AiUiState
 }
 
 data class AgentToolResult(
@@ -98,6 +103,16 @@ class GeminiCodeAssistant {
     fun clearConversation() {
         _messages.value = emptyList()
         _uiState.value = AiUiState.Idle
+    }
+
+    fun popLastPromptForRetry(): String? {
+        val current = _messages.value
+        val lastUserIdx = current.indexOfLast { it.isUser }
+        if (lastUserIdx < 0) return null
+        val prompt = current[lastUserIdx].text
+        _messages.value = current.take(lastUserIdx)
+        _uiState.value = AiUiState.Idle
+        return prompt
     }
 
     fun markCancelled() {
@@ -224,7 +239,7 @@ class GeminiCodeAssistant {
                 val turnVisibleText = StringBuilder()
 
                 val turnOutcome = withTimeout(TURN_TIMEOUT_MS) {
-                    callModelWithSseFallback(
+                    callModelWithRetryAndFallback(
                         modelId = activeModel,
                         apiKey = resolvedKey,
                         requestBody = requestJson,
@@ -238,12 +253,12 @@ class GeminiCodeAssistant {
                                 ),
                             )
                         },
-                        onFallback = {
+                        onRetryStatus = { detail ->
                             addOrUpdateStep(
                                 AgentStep(
                                     id = thinkStepId,
-                                    title = "Retrying $activeModel (standard request)",
-                                    detail = "SSE timed out, falling back to non-streaming...",
+                                    title = "Retrying $activeModel",
+                                    detail = detail,
                                     status = AgentStepStatus.RUNNING,
                                 ),
                             )
@@ -400,13 +415,19 @@ class GeminiCodeAssistant {
         } catch (e: GeminiApiException) {
             Log.e(TAG, "Gemini API HTTP ${e.httpCode}: ${e.message}", e)
             finalizeFailedSteps(assistantMsgId, steps, accumulatedVisibleText.toString(), "API error ${e.httpCode}")
+            val overloaded = e.httpCode == 503 || e.httpCode == 429
             val friendly = when (e.httpCode) {
                 400, 401, 403 -> "Gemini API error (${e.httpCode}): ${e.message}"
-                404 -> "Model '$activeModel' was not found for this API key (404): ${e.message}. Tap the Key icon to change model if needed."
+                404 -> "Model '$activeModel' was not found for this API key (404): ${e.message}. Tap Switch Model to pick another."
                 429 -> "Gemini API rate limit or quota exceeded (429): ${e.message}"
+                503 -> "$activeModel is temporarily overloaded (503): ${e.message}"
                 else -> "Gemini API error (${e.httpCode}): ${e.message}"
             }
-            _uiState.value = AiUiState.Error(friendly)
+            _uiState.value = AiUiState.Error(
+                message = friendly,
+                isRetryable = e.httpCode !in listOf(400, 401, 403),
+                isModelOverloaded = overloaded || e.httpCode == 404,
+            )
         } catch (e: UnknownHostException) {
             Log.e(TAG, "No network connection for Gemini", e)
             finalizeFailedSteps(assistantMsgId, steps, accumulatedVisibleText.toString(), "Offline")
@@ -416,6 +437,41 @@ class GeminiCodeAssistant {
             val msg = e.localizedMessage?.ifBlank { null } ?: "Failed to reach Gemini API."
             finalizeFailedSteps(assistantMsgId, steps, accumulatedVisibleText.toString(), msg)
             _uiState.value = AiUiState.Error(msg)
+        }
+    }
+
+    private suspend fun callModelWithRetryAndFallback(
+        modelId: String,
+        apiKey: String,
+        requestBody: String,
+        onConnected: () -> Unit,
+        onRetryStatus: (String) -> Unit,
+        onTextDelta: (String) -> Unit,
+    ): TurnStreamOutcome {
+        val backoffMs = longArrayOf(1_500L, 3_000L, 5_000L)
+        var attempt = 0
+        while (true) {
+            coroutineContext.ensureActive()
+            try {
+                return callModelWithSseFallback(
+                    modelId = modelId,
+                    apiKey = apiKey,
+                    requestBody = requestBody,
+                    onConnected = onConnected,
+                    onFallback = {
+                        onRetryStatus("SSE timed out, trying standard request...")
+                    },
+                    onTextDelta = onTextDelta,
+                )
+            } catch (e: GeminiApiException) {
+                if (!isTransientHttpStatus(e.httpCode) || attempt >= backoffMs.size) {
+                    throw e
+                }
+                val waitMs = backoffMs[attempt]
+                attempt++
+                onRetryStatus("High demand (${e.httpCode}) — retrying in ${waitMs / 1000.0}s (${attempt}/${backoffMs.size})...")
+                delay(waitMs)
+            }
         }
     }
 
@@ -446,13 +502,12 @@ class GeminiCodeAssistant {
             if (receivedAnyBytes) throw e
             Log.w(TAG, "SSE timed out before receiving response; retrying non-streaming generateContent", e)
             onFallback()
-            val fallbackOutcome = generateContentUnary(
+            generateContentUnary(
                 modelId = modelId,
                 apiKey = apiKey,
                 requestBody = requestBody,
                 onText = onTextDelta,
             )
-            fallbackOutcome
         }
     }
 
@@ -996,6 +1051,10 @@ class GeminiCodeAssistant {
         fun hasBuiltInApiKey(): Boolean {
             val builtIn = BuildConfig.GEMINI_API_KEY.trim()
             return builtIn.isNotEmpty() && !builtIn.equals("GEMINI_API_KEY_DEFAULT_VALUE", ignoreCase = true)
+        }
+
+        internal fun isTransientHttpStatus(httpCode: Int): Boolean {
+            return httpCode == 500 || httpCode == 502 || httpCode == 503 || httpCode == 504
         }
 
         internal fun appendRawPart(target: MutableList<JSONObject>, incoming: JSONObject) {
