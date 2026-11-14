@@ -6,6 +6,7 @@ import androidx.datastore.preferences.core.edit
 import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.ai.GEMINI_MODEL_ID
 import com.example.model.EditorSettings
 import com.example.model.FileLanguage
 import com.example.model.ProjectFile
@@ -33,10 +34,15 @@ class ProjectRepository(
         val AUTO_INDENT = booleanPreferencesKey("editor_auto_indent")
         val DARK_THEME = booleanPreferencesKey("editor_dark_theme")
         val CUSTOM_GEMINI_API_KEY = stringPreferencesKey("custom_gemini_api_key")
+        val GEMINI_MODEL_ID_KEY = stringPreferencesKey("gemini_model_id")
     }
 
     val customGeminiApiKey: Flow<String> = context.editorDataStore.data.map { prefs ->
         prefs[PrefKeys.CUSTOM_GEMINI_API_KEY].orEmpty()
+    }
+
+    val geminiModelId: Flow<String> = context.editorDataStore.data.map { prefs ->
+        prefs[PrefKeys.GEMINI_MODEL_ID_KEY]?.takeIf { it.isNotBlank() } ?: GEMINI_MODEL_ID
     }
 
     suspend fun saveCustomGeminiApiKey(apiKey: String) {
@@ -46,6 +52,17 @@ class ProjectRepository(
                 prefs.remove(PrefKeys.CUSTOM_GEMINI_API_KEY)
             } else {
                 prefs[PrefKeys.CUSTOM_GEMINI_API_KEY] = cleaned
+            }
+        }
+    }
+
+    suspend fun saveGeminiModelId(modelId: String) {
+        context.editorDataStore.edit { prefs ->
+            val cleaned = modelId.trim().removePrefix("models/")
+            if (cleaned.isEmpty()) {
+                prefs.remove(PrefKeys.GEMINI_MODEL_ID_KEY)
+            } else {
+                prefs[PrefKeys.GEMINI_MODEL_ID_KEY] = cleaned
             }
         }
     }

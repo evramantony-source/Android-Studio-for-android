@@ -6,6 +6,7 @@ import com.example.model.BuildDiagnostic
 import com.example.model.ProjectFile
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -18,6 +19,7 @@ import org.json.JSONObject
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.UnknownHostException
 import kotlin.coroutines.coroutineContext
@@ -26,6 +28,9 @@ private const val TAG = "GeminiCodeAssistant"
 const val GEMINI_MODEL_ID = "gemini-4-hydrogen"
 private const val GEMINI_API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
 private const val MAX_AGENT_TURNS = 12
+private const val CONNECT_TIMEOUT_MS = 30_000
+private const val READ_TIMEOUT_MS = 180_000
+private const val TURN_TIMEOUT_MS = 180_000L
 
 data class SuggestedCodeBlock(
     val language: String,
@@ -117,6 +122,7 @@ class GeminiCodeAssistant {
     suspend fun askGemini(
         userPrompt: String,
         apiKey: String,
+        modelId: String = GEMINI_MODEL_ID,
         projectName: String,
         packageName: String,
         activeFile: ProjectFile?,
@@ -126,6 +132,8 @@ class GeminiCodeAssistant {
     ) {
         val trimmed = userPrompt.trim()
         if (trimmed.isEmpty()) return
+
+        val activeModel = modelId.trim().removePrefix("models/").ifBlank { GEMINI_MODEL_ID }
 
         val resolvedKey = resolveApiKey(apiKey)
         if (resolvedKey.isEmpty()) {
@@ -198,13 +206,16 @@ class GeminiCodeAssistant {
                 addOrUpdateStep(
                     AgentStep(
                         id = thinkStepId,
-                        title = if (turn == 0) "Planning with $GEMINI_MODEL_ID" else "Analyzing results",
-                        detail = "Streaming response...",
+                        title = if (turn == 0) "Sending request to $activeModel" else "Analyzing tool results",
+                        detail = "Waiting for model...",
                         status = AgentStepStatus.RUNNING,
                     ),
                 )
 
-                val requestJson = buildRequestPayload(contents = conversationContents)
+                val requestJson = buildRequestPayload(
+                    contents = conversationContents,
+                    modelId = activeModel,
+                )
                 val turnPrefixLength = accumulatedVisibleText.length
                 if (accumulatedVisibleText.isNotEmpty() && !accumulatedVisibleText.endsWith("\n")) {
                     accumulatedVisibleText.append("\n\n")
@@ -212,10 +223,31 @@ class GeminiCodeAssistant {
                 val textBeforeTurn = accumulatedVisibleText.toString()
                 val turnVisibleText = StringBuilder()
 
-                val turnOutcome = withTimeout(90_000L) {
-                    streamGenerateContent(
+                val turnOutcome = withTimeout(TURN_TIMEOUT_MS) {
+                    callModelWithSseFallback(
+                        modelId = activeModel,
                         apiKey = resolvedKey,
                         requestBody = requestJson,
+                        onConnected = {
+                            addOrUpdateStep(
+                                AgentStep(
+                                    id = thinkStepId,
+                                    title = if (turn == 0) "Streaming from $activeModel" else "Analyzing tool results",
+                                    detail = "Connected, receiving response...",
+                                    status = AgentStepStatus.RUNNING,
+                                ),
+                            )
+                        },
+                        onFallback = {
+                            addOrUpdateStep(
+                                AgentStep(
+                                    id = thinkStepId,
+                                    title = "Retrying $activeModel (standard request)",
+                                    detail = "SSE timed out, falling back to non-streaming...",
+                                    status = AgentStepStatus.RUNNING,
+                                ),
+                            )
+                        },
                         onTextDelta = { delta ->
                             turnVisibleText.append(delta)
                             accumulatedVisibleText.clear()
@@ -239,11 +271,12 @@ class GeminiCodeAssistant {
 
                 val functionCalls = turnOutcome.functionCalls
                 if (functionCalls.isEmpty()) {
+                    val toolActionCount = steps.count { it.status == AgentStepStatus.COMPLETED && !it.id.startsWith("think_") }
                     addOrUpdateStep(
                         AgentStep(
                             id = thinkStepId,
-                            title = if (turn == 0) "Generated response" else "Completed task",
-                            detail = "${steps.count { it.status == AgentStepStatus.COMPLETED && !it.id.startsWith("think_") }} action(s) executed",
+                            title = if (turn == 0) "Responded via $activeModel" else "Completed task",
+                            detail = if (toolActionCount > 0) "$toolActionCount action(s) executed" else "Done",
                             status = AgentStepStatus.COMPLETED,
                         ),
                     )
@@ -257,7 +290,7 @@ class GeminiCodeAssistant {
                                 "Gemini returned no text (finishReason: ${turnOutcome.finishReason})."
                             else -> "Gemini returned an empty response."
                         }
-                        removeMessage(assistantMsgId)
+                        finalizeFailedSteps(assistantMsgId, steps, "", reasonMsg)
                         _uiState.value = AiUiState.Error(reasonMsg)
                     } else {
                         val displayText = finalText.ifBlank { "All requested actions finished." }
@@ -353,8 +386,14 @@ class GeminiCodeAssistant {
             }
         } catch (e: TimeoutCancellationException) {
             Log.e(TAG, "Gemini request timed out", e)
-            finalizeFailedSteps(assistantMsgId, steps, accumulatedVisibleText.toString(), "Timed out")
-            _uiState.value = AiUiState.Error("Request timed out after 90 seconds. Check your connection and retry.")
+            val msg = "Timed out waiting for $activeModel after ${TURN_TIMEOUT_MS / 1000}s."
+            finalizeFailedSteps(assistantMsgId, steps, accumulatedVisibleText.toString(), msg)
+            _uiState.value = AiUiState.Error(msg)
+        } catch (e: SocketTimeoutException) {
+            Log.e(TAG, "Socket timeout talking to Gemini ($activeModel)", e)
+            val msg = "Network timeout reaching $activeModel (${e.message ?: "socket timeout"}). Check your internet connection or tap the Key icon to switch/verify the model."
+            finalizeFailedSteps(assistantMsgId, steps, accumulatedVisibleText.toString(), "Socket timeout")
+            _uiState.value = AiUiState.Error(msg)
         } catch (e: CancellationException) {
             markCancelled()
             throw e
@@ -363,7 +402,7 @@ class GeminiCodeAssistant {
             finalizeFailedSteps(assistantMsgId, steps, accumulatedVisibleText.toString(), "API error ${e.httpCode}")
             val friendly = when (e.httpCode) {
                 400, 401, 403 -> "Gemini API error (${e.httpCode}): ${e.message}"
-                404 -> "Model '$GEMINI_MODEL_ID' was not found for this API key (404): ${e.message}"
+                404 -> "Model '$activeModel' was not found for this API key (404): ${e.message}. Tap the Key icon to change model if needed."
                 429 -> "Gemini API rate limit or quota exceeded (429): ${e.message}"
                 else -> "Gemini API error (${e.httpCode}): ${e.message}"
             }
@@ -374,10 +413,46 @@ class GeminiCodeAssistant {
             _uiState.value = AiUiState.Error("Unable to reach generativelanguage.googleapis.com. Check your internet connection.")
         } catch (e: Exception) {
             Log.e(TAG, "Gemini generation failed", e)
-            finalizeFailedSteps(assistantMsgId, steps, accumulatedVisibleText.toString(), "Failed")
-            _uiState.value = AiUiState.Error(
-                e.localizedMessage?.ifBlank { null } ?: "Failed to reach Gemini API.",
+            val msg = e.localizedMessage?.ifBlank { null } ?: "Failed to reach Gemini API."
+            finalizeFailedSteps(assistantMsgId, steps, accumulatedVisibleText.toString(), msg)
+            _uiState.value = AiUiState.Error(msg)
+        }
+    }
+
+    private suspend fun callModelWithSseFallback(
+        modelId: String,
+        apiKey: String,
+        requestBody: String,
+        onConnected: () -> Unit,
+        onFallback: () -> Unit,
+        onTextDelta: (String) -> Unit,
+    ): TurnStreamOutcome {
+        var receivedAnyBytes = false
+        return try {
+            streamGenerateContent(
+                modelId = modelId,
+                apiKey = apiKey,
+                requestBody = requestBody,
+                onConnected = {
+                    receivedAnyBytes = true
+                    onConnected()
+                },
+                onTextDelta = { delta ->
+                    receivedAnyBytes = true
+                    onTextDelta(delta)
+                },
             )
+        } catch (e: SocketTimeoutException) {
+            if (receivedAnyBytes) throw e
+            Log.w(TAG, "SSE timed out before receiving response; retrying non-streaming generateContent", e)
+            onFallback()
+            val fallbackOutcome = generateContentUnary(
+                modelId = modelId,
+                apiKey = apiKey,
+                requestBody = requestBody,
+                onText = onTextDelta,
+            )
+            fallbackOutcome
         }
     }
 
@@ -394,17 +469,13 @@ class GeminiCodeAssistant {
                 step
             }
         }
-        if (currentText.isBlank() && updated.none { !it.id.startsWith("think_") }) {
-            removeMessage(assistantMsgId)
-        } else {
-            updateAssistantMessage(
-                id = assistantMsgId,
-                text = currentText,
-                isStreaming = false,
-                steps = updated,
-                codeBlocks = extractCodeBlocks(currentText),
-            )
-        }
+        updateAssistantMessage(
+            id = assistantMsgId,
+            text = currentText,
+            isStreaming = false,
+            steps = updated,
+            codeBlocks = extractCodeBlocks(currentText),
+        )
     }
 
     private suspend fun executeToolCall(
@@ -459,19 +530,31 @@ class GeminiCodeAssistant {
     }
 
     private suspend fun streamGenerateContent(
+        modelId: String,
         apiKey: String,
         requestBody: String,
+        onConnected: () -> Unit,
         onTextDelta: (String) -> Unit,
     ): TurnStreamOutcome = withContext(Dispatchers.IO) {
-        val endpoint = "$GEMINI_API_BASE/$GEMINI_MODEL_ID:streamGenerateContent?alt=sse"
+        val endpoint = "$GEMINI_API_BASE/$modelId:streamGenerateContent?alt=sse"
+        val bodyBytes = requestBody.toByteArray(Charsets.UTF_8)
         val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
-            connectTimeout = 20_000
-            readTimeout = 75_000
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            useCaches = false
             doOutput = true
+            setFixedLengthStreamingMode(bodyBytes.size)
             setRequestProperty("Content-Type", "application/json; charset=utf-8")
             setRequestProperty("Accept", "text/event-stream")
+            setRequestProperty("Accept-Encoding", "identity")
             setRequestProperty("x-goog-api-key", apiKey)
+        }
+
+        val cancelHandle = coroutineContext[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) {
+                Thread { runCatching { connection.disconnect() } }.start()
+            }
         }
 
         val assembledParts = mutableListOf<JSONObject>()
@@ -510,7 +593,7 @@ class GeminiCodeAssistant {
 
         try {
             connection.outputStream.use { os ->
-                os.write(requestBody.toByteArray(Charsets.UTF_8))
+                os.write(bodyBytes)
                 os.flush()
             }
 
@@ -523,6 +606,8 @@ class GeminiCodeAssistant {
                 }
                 throw GeminiApiException(status, parsedMsg)
             }
+
+            onConnected()
 
             BufferedReader(InputStreamReader(connection.inputStream, Charsets.UTF_8)).use { reader ->
                 val dataBuffer = StringBuilder()
@@ -553,16 +638,96 @@ class GeminiCodeAssistant {
                 }
             }
 
-            val partsArray = JSONArray().apply {
-                assembledParts.forEach { put(it) }
-            }
             TurnStreamOutcome(
-                modelParts = partsArray,
+                modelParts = JSONArray().apply { assembledParts.forEach { put(it) } },
                 functionCalls = functionCalls,
                 blockReason = blockReason,
                 finishReason = finishReason,
             )
         } finally {
+            cancelHandle?.dispose()
+            connection.disconnect()
+        }
+    }
+
+    private suspend fun generateContentUnary(
+        modelId: String,
+        apiKey: String,
+        requestBody: String,
+        onText: (String) -> Unit,
+    ): TurnStreamOutcome = withContext(Dispatchers.IO) {
+        val endpoint = "$GEMINI_API_BASE/$modelId:generateContent"
+        val bodyBytes = requestBody.toByteArray(Charsets.UTF_8)
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            connectTimeout = CONNECT_TIMEOUT_MS
+            readTimeout = READ_TIMEOUT_MS
+            useCaches = false
+            doOutput = true
+            setFixedLengthStreamingMode(bodyBytes.size)
+            setRequestProperty("Content-Type", "application/json; charset=utf-8")
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Accept-Encoding", "identity")
+            setRequestProperty("x-goog-api-key", apiKey)
+        }
+
+        val cancelHandle = coroutineContext[Job]?.invokeOnCompletion { cause ->
+            if (cause != null) {
+                Thread { runCatching { connection.disconnect() } }.start()
+            }
+        }
+
+        try {
+            connection.outputStream.use { os ->
+                os.write(bodyBytes)
+                os.flush()
+            }
+
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else (connection.errorStream ?: connection.inputStream)
+            val rawResponse = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+
+            if (status !in 200..299) {
+                val parsedMsg = extractApiErrorMessage(rawResponse).ifBlank {
+                    connection.responseMessage.orEmpty().ifBlank { "HTTP $status" }
+                }
+                throw GeminiApiException(status, parsedMsg)
+            }
+
+            val parsed = parseSsePayload(rawResponse)
+            if (parsed.errorMessage != null) {
+                throw GeminiApiException(status, parsed.errorMessage)
+            }
+            if (parsed.text.isNotEmpty()) {
+                onText(parsed.text)
+            }
+
+            val assembledParts = mutableListOf<JSONObject>()
+            val functionCalls = mutableListOf<ParsedFunctionCall>()
+            parsed.rawParts.forEach { rawPart ->
+                appendRawPart(assembledParts, rawPart)
+                val fc = rawPart.optJSONObject("functionCall")
+                if (fc != null) {
+                    val fnName = fc.optString("name")
+                    if (fnName.isNotBlank()) {
+                        functionCalls.add(
+                            ParsedFunctionCall(
+                                name = fnName,
+                                args = fc.optJSONObject("args") ?: JSONObject(),
+                            ),
+                        )
+                    }
+                }
+            }
+
+            TurnStreamOutcome(
+                modelParts = JSONArray().apply { assembledParts.forEach { put(it) } },
+                functionCalls = functionCalls,
+                blockReason = parsed.blockReason,
+                finishReason = parsed.finishReason,
+            )
+        } finally {
+            cancelHandle?.dispose()
             connection.disconnect()
         }
     }
@@ -589,9 +754,12 @@ class GeminiCodeAssistant {
         return contentsArray
     }
 
-    internal fun buildRequestPayload(contents: JSONArray): String {
+    internal fun buildRequestPayload(
+        contents: JSONArray,
+        modelId: String = GEMINI_MODEL_ID,
+    ): String {
         val systemInstructionText = """
-            You are an autonomous coding agent powered by $GEMINI_MODEL_ID inside DroidForge Studio, an offline-capable Android Java IDE and APK builder.
+            You are an autonomous coding agent powered by $modelId inside DroidForge Studio, an offline-capable Android Java IDE and APK builder.
 
             Execution rules:
             - Act autonomously WITHOUT asking the user for permission before reading, creating, editing, or deleting files, or building the APK.
@@ -792,10 +960,6 @@ class GeminiCodeAssistant {
                 msg
             }
         }
-    }
-
-    private fun removeMessage(id: String) {
-        _messages.value = _messages.value.filterNot { it.id == id }
     }
 
     internal data class ParsedFunctionCall(

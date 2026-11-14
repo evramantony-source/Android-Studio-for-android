@@ -31,6 +31,7 @@ class MainActivity : ComponentActivity() {
             val jumpToLine by viewModel.jumpToLine.collectAsStateWithLifecycle()
             val statusBanner by viewModel.statusBanner.collectAsStateWithLifecycle()
             val customGeminiApiKey by viewModel.customGeminiApiKey.collectAsStateWithLifecycle()
+            val geminiModelId by viewModel.geminiModelId.collectAsStateWithLifecycle()
             val aiMessages by viewModel.aiMessages.collectAsStateWithLifecycle()
             val aiState by viewModel.aiState.collectAsStateWithLifecycle()
 
@@ -58,6 +59,7 @@ class MainActivity : ComponentActivity() {
                         jumpToLine = jumpToLine,
                         statusBanner = statusBanner,
                         customGeminiApiKey = customGeminiApiKey,
+                        geminiModelId = geminiModelId,
                         aiMessages = aiMessages,
                         aiState = aiState,
                         onSelectFile = viewModel::openFile,
@@ -72,7 +74,7 @@ class MainActivity : ComponentActivity() {
                         onClearStatusBanner = viewModel::clearStatusBanner,
                         onAskGemini = viewModel::askGemini,
                         onStopGemini = viewModel::cancelGemini,
-                        onSaveGeminiApiKey = viewModel::saveCustomGeminiApiKey,
+                        onSaveGeminiConfig = viewModel::saveGeminiConfig,
                         onApplyGeminiCode = viewModel::applySuggestedCode,
                         onClearAiChat = viewModel::clearAiChat,
                         onUpdateSettings = viewModel::updateEditorSettings,

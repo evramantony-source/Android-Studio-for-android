@@ -74,12 +74,13 @@ import com.example.ui.theme.JetBrainsMonoFontFamily
 fun GeminiPanel(
     activeFileName: String?,
     customApiKey: String,
+    geminiModelId: String,
     diagnostics: List<BuildDiagnostic>,
     messages: List<ChatMessage>,
     aiState: AiUiState,
     onSendPrompt: (String) -> Unit,
     onStopGemini: () -> Unit,
-    onSaveApiKey: (String) -> Unit,
+    onSaveGeminiConfig: (apiKey: String, modelId: String) -> Unit,
     onApplyCode: (SuggestedCodeBlock) -> Unit,
     onClearChat: () -> Unit,
     onClose: () -> Unit,
@@ -125,14 +126,10 @@ fun GeminiPanel(
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
-                        text = buildString {
-                            append(GEMINI_MODEL_ID)
-                            append(" • ")
-                            when {
-                                !hasEffectiveKey -> append("API key needed")
-                                activeFileName != null -> append("Auto-edit • $activeFileName")
-                                else -> append("Auto-edit ready")
-                            }
+                        text = if (hasEffectiveKey) {
+                            "$geminiModelId • Auto-edit"
+                        } else {
+                            "$geminiModelId • Key needed"
                         },
                         style = MaterialTheme.typography.labelSmall,
                         color = if (hasEffectiveKey) {
@@ -237,7 +234,7 @@ fun GeminiPanel(
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 )
                                 Text(
-                                    text = "Add your Google AI Studio Gemini API key to use $GEMINI_MODEL_ID autonomously on your device, or set GEMINI_API_KEY in AI Studio / GitHub Secrets.",
+                                    text = "Add your Google AI Studio Gemini API key to use $geminiModelId autonomously on your device, or set GEMINI_API_KEY in AI Studio / GitHub Secrets.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 )
@@ -266,7 +263,7 @@ fun GeminiPanel(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 Text(
-                                    text = "Autonomous Coding Agent ($GEMINI_MODEL_ID)",
+                                    text = "Autonomous Coding Agent ($geminiModelId)",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
@@ -374,10 +371,11 @@ fun GeminiPanel(
     if (showApiKeyDialog) {
         GeminiApiKeyDialog(
             currentCustomKey = customApiKey,
+            currentModelId = geminiModelId,
             hasBuiltInKey = GeminiCodeAssistant.hasBuiltInApiKey(),
-            onSave = { newKey ->
+            onSave = { newKey, newModel ->
                 showApiKeyDialog = false
-                onSaveApiKey(newKey)
+                onSaveGeminiConfig(newKey, newModel)
             },
             onDismiss = { showApiKeyDialog = false },
         )
@@ -387,28 +385,24 @@ fun GeminiPanel(
 @Composable
 private fun GeminiApiKeyDialog(
     currentCustomKey: String,
+    currentModelId: String,
     hasBuiltInKey: Boolean,
-    onSave: (String) -> Unit,
+    onSave: (apiKey: String, modelId: String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var keyInput by remember(currentCustomKey) { mutableStateOf(currentCustomKey) }
+    var modelInput by remember(currentModelId) { mutableStateOf(currentModelId) }
     var revealKey by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Gemini API Key") },
+        title = { Text("Gemini Configuration") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "Model: $GEMINI_MODEL_ID",
-                    fontFamily = JetBrainsMonoFontFamily,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Text(
                     text = when {
                         currentCustomKey.isNotBlank() ->
-                            "Using your custom API key saved securely on this device."
+                            "Using your custom API key saved locally on this device."
                         hasBuiltInKey ->
                             "Using the GEMINI_API_KEY configured at build time. Paste a key below to override it."
                         else ->
@@ -420,7 +414,7 @@ private fun GeminiApiKeyDialog(
                 OutlinedTextField(
                     value = keyInput,
                     onValueChange = { keyInput = it },
-                    label = { Text("AIza...") },
+                    label = { Text("API Key (AIza...)") },
                     singleLine = true,
                     visualTransformation = if (revealKey) VisualTransformation.None else PasswordVisualTransformation(),
                     trailingIcon = {
@@ -435,11 +429,20 @@ private fun GeminiApiKeyDialog(
                         .fillMaxWidth()
                         .testTag("gemini_api_key_input"),
                 )
+                OutlinedTextField(
+                    value = modelInput,
+                    onValueChange = { modelInput = it },
+                    label = { Text("Model ID (default: $GEMINI_MODEL_ID)") },
+                    singleLine = true,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("gemini_model_id_input"),
+                )
             }
         },
         confirmButton = {
             Button(
-                onClick = { onSave(keyInput) },
+                onClick = { onSave(keyInput, modelInput) },
                 modifier = Modifier.testTag("save_gemini_api_key_button"),
             ) {
                 Text("Save")
@@ -448,8 +451,8 @@ private fun GeminiApiKeyDialog(
         dismissButton = {
             Row {
                 if (currentCustomKey.isNotBlank()) {
-                    TextButton(onClick = { onSave("") }) {
-                        Text("Clear")
+                    TextButton(onClick = { onSave("", modelInput) }) {
+                        Text("Clear Key")
                     }
                 }
                 TextButton(onClick = onDismiss) {

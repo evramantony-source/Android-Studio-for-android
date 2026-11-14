@@ -7,6 +7,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.ai.AgentToolResult
 import com.example.ai.AiUiState
 import com.example.ai.ChatMessage
+import com.example.ai.GEMINI_MODEL_ID
 import com.example.ai.GeminiCodeAssistant
 import com.example.ai.ProjectToolExecutor
 import com.example.ai.SuggestedCodeBlock
@@ -78,6 +79,12 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5_000),
         initialValue = "",
+    )
+
+    val geminiModelId: StateFlow<String> = repository.geminiModelId.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5_000),
+        initialValue = GEMINI_MODEL_ID,
     )
 
     val aiMessages: StateFlow<List<ChatMessage>> = geminiAssistant.messages
@@ -273,12 +280,14 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         val active = _projectFiles.value.find { it.relativePath == _activeFilePath.value }
         val diagnostics = _lastBuildResult.value?.diagnostics.orEmpty()
         val apiKey = customGeminiApiKey.value
+        val modelId = geminiModelId.value
         aiJob?.cancel()
         aiJob = viewModelScope.launch {
             val executor = createToolExecutor(project.id, project.packageName)
             geminiAssistant.askGemini(
                 userPrompt = prompt,
                 apiKey = apiKey,
+                modelId = modelId,
                 projectName = project.name,
                 packageName = project.packageName,
                 activeFile = active,
@@ -565,14 +574,12 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun saveCustomGeminiApiKey(apiKey: String) {
+    fun saveGeminiConfig(apiKey: String, modelId: String) {
         viewModelScope.launch {
             repository.saveCustomGeminiApiKey(apiKey)
-            _statusBanner.value = if (apiKey.isBlank()) {
-                "Cleared custom Gemini API key."
-            } else {
-                "Saved Gemini API key."
-            }
+            repository.saveGeminiModelId(modelId)
+            val effectiveModel = modelId.trim().removePrefix("models/").ifBlank { GEMINI_MODEL_ID }
+            _statusBanner.value = "Saved Gemini settings ($effectiveModel)."
         }
     }
 
