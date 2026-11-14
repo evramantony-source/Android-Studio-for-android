@@ -123,6 +123,7 @@ fun IdeWorkspaceScreen(
     onExportApkUri: (android.net.Uri) -> Unit,
     onClearStatusBanner: () -> Unit,
     onAskGemini: (String) -> Unit,
+    onStopGemini: () -> Unit,
     onSaveGeminiApiKey: (String) -> Unit,
     onApplyGeminiCode: (SuggestedCodeBlock) -> Unit,
     onClearAiChat: () -> Unit,
@@ -436,7 +437,7 @@ fun IdeWorkspaceScreen(
                                     },
                                     onAskGeminiToFix = {
                                         showGeminiPanel = true
-                                        onAskGemini("Fix the compiler errors reported in the latest build and return the corrected full Java code.")
+                                        onAskGemini("Inspect the build errors, edit the affected files directly, and re-run build_apk until the build succeeds.")
                                     },
                                     onExportApk = {
                                         val safeName = project.name.lowercase().replace(Regex("[^a-z0-9]+"), "-")
@@ -460,6 +461,7 @@ fun IdeWorkspaceScreen(
                             messages = aiMessages,
                             aiState = aiState,
                             onSendPrompt = onAskGemini,
+                            onStopGemini = onStopGemini,
                             onSaveApiKey = onSaveGeminiApiKey,
                             onApplyCode = onApplyGeminiCode,
                             onClearChat = onClearAiChat,
@@ -513,6 +515,7 @@ fun IdeWorkspaceScreen(
                             messages = aiMessages,
                             aiState = aiState,
                             onSendPrompt = onAskGemini,
+                            onStopGemini = onStopGemini,
                             onSaveApiKey = onSaveGeminiApiKey,
                             onApplyCode = onApplyGeminiCode,
                             onClearChat = onClearAiChat,

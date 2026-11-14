@@ -71,6 +71,7 @@ class MainActivity : ComponentActivity() {
                         onExportApkUri = viewModel::exportApkToUri,
                         onClearStatusBanner = viewModel::clearStatusBanner,
                         onAskGemini = viewModel::askGemini,
+                        onStopGemini = viewModel::cancelGemini,
                         onSaveGeminiApiKey = viewModel::saveCustomGeminiApiKey,
                         onApplyGeminiCode = viewModel::applySuggestedCode,
                         onClearAiChat = viewModel::clearAiChat,

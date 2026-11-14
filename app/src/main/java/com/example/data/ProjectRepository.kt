@@ -157,19 +157,48 @@ class ProjectRepository(
             .toList()
     }
 
-    suspend fun saveFile(projectId: String, relativePath: String, content: String) = withContext(Dispatchers.IO) {
+    fun resolveProjectFile(projectId: String, relativePath: String): File? {
+        val dir = getProjectDir(projectId).canonicalFile
+        val cleanRel = relativePath.trim().replace('\\', '/').trimStart('/')
+        if (cleanRel.isEmpty()) return null
+        val candidate = File(dir, cleanRel).canonicalFile
+        val dirPrefix = dir.path + File.separator
+        if (candidate.path != dir.path && !candidate.path.startsWith(dirPrefix)) {
+            return null
+        }
+        return candidate
+    }
+
+    suspend fun listAllProjectPaths(
+        projectId: String,
+        includeBuild: Boolean = false,
+    ): List<String> = withContext(Dispatchers.IO) {
         val dir = getProjectDir(projectId)
-        val target = File(dir, relativePath)
+        if (!dir.exists()) return@withContext emptyList()
+        dir.walkTopDown()
+            .filter { file ->
+                if (!file.isFile) return@filter false
+                val rel = file.relativeTo(dir).invariantSeparatorsPath
+                rel != "project.json" && (includeBuild || !rel.startsWith("build/"))
+            }
+            .map { it.relativeTo(dir).invariantSeparatorsPath }
+            .sorted()
+            .toList()
+    }
+
+    suspend fun saveFile(projectId: String, relativePath: String, content: String) = withContext(Dispatchers.IO) {
+        val target = resolveProjectFile(projectId, relativePath) ?: return@withContext
         target.parentFile?.mkdirs()
         target.writeText(content)
+        val dir = getProjectDir(projectId)
         readMetadata(dir)?.let { meta ->
             writeMetadata(dir, meta.copy(updatedAtMillis = System.currentTimeMillis()))
         }
     }
 
     suspend fun deleteFile(projectId: String, relativePath: String) = withContext(Dispatchers.IO) {
-        val target = File(getProjectDir(projectId), relativePath)
-        if (target.exists()) target.delete()
+        val target = resolveProjectFile(projectId, relativePath) ?: return@withContext
+        if (target.exists() && target.isFile) target.delete()
     }
 
     suspend fun recordBuildResult(

@@ -4,9 +4,11 @@ import android.app.Application
 import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.ai.AgentToolResult
 import com.example.ai.AiUiState
 import com.example.ai.ChatMessage
 import com.example.ai.GeminiCodeAssistant
+import com.example.ai.ProjectToolExecutor
 import com.example.ai.SuggestedCodeBlock
 import com.example.compiler.OfflineApkBuilder
 import com.example.data.ProjectRepository
@@ -26,6 +28,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 
 class IdeViewModel(application: Application) : AndroidViewModel(application) {
@@ -80,6 +84,7 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
     val aiState: StateFlow<AiUiState> = geminiAssistant.uiState
 
     private var saveJob: Job? = null
+    private var aiJob: Job? = null
 
     init {
         refreshProjects()
@@ -268,7 +273,9 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
         val active = _projectFiles.value.find { it.relativePath == _activeFilePath.value }
         val diagnostics = _lastBuildResult.value?.diagnostics.orEmpty()
         val apiKey = customGeminiApiKey.value
-        viewModelScope.launch {
+        aiJob?.cancel()
+        aiJob = viewModelScope.launch {
+            val executor = createToolExecutor(project.id, project.packageName)
             geminiAssistant.askGemini(
                 userPrompt = prompt,
                 apiKey = apiKey,
@@ -277,6 +284,283 @@ class IdeViewModel(application: Application) : AndroidViewModel(application) {
                 activeFile = active,
                 allFiles = _projectFiles.value,
                 diagnostics = diagnostics,
+                toolExecutor = executor,
+            )
+        }
+    }
+
+    fun cancelGemini() {
+        aiJob?.cancel()
+        aiJob = null
+        geminiAssistant.markCancelled()
+    }
+
+    private fun createToolExecutor(
+        projectId: String,
+        packageName: String,
+    ): ProjectToolExecutor = object : ProjectToolExecutor {
+
+        private suspend fun flushInMemoryFiles() {
+            saveJob?.cancel()
+            _projectFiles.value.forEach { file ->
+                repository.saveFile(projectId, file.relativePath, file.content)
+            }
+        }
+
+        override suspend fun listFiles(): AgentToolResult {
+            flushInMemoryFiles()
+            val paths = repository.listAllProjectPaths(projectId, includeBuild = false)
+            val arr = JSONArray().apply { paths.forEach { put(it) } }
+            return AgentToolResult(
+                success = true,
+                stepDetail = "${paths.size} file(s) in project",
+                payload = JSONObject()
+                    .put("files", arr)
+                    .put("count", paths.size),
+            )
+        }
+
+        override suspend fun readFile(path: String): AgentToolResult {
+            flushInMemoryFiles()
+            val cleanPath = path.trim().replace('\\', '/').trimStart('/')
+            val target = repository.resolveProjectFile(projectId, cleanPath)
+                ?: return AgentToolResult(
+                    success = false,
+                    stepDetail = "Invalid path: $path",
+                    payload = JSONObject().put("error", "Path is outside project directory or empty: $path"),
+                )
+            if (!target.exists() || !target.isFile) {
+                return AgentToolResult(
+                    success = false,
+                    stepDetail = "File not found: $cleanPath",
+                    payload = JSONObject().put("error", "File does not exist: $cleanPath"),
+                )
+            }
+            val content = withContext(Dispatchers.IO) { target.readText() }
+            val lines = content.lines()
+            val truncated = if (content.length > 50_000) content.take(50_000) + "\n...[truncated]" else content
+            return AgentToolResult(
+                success = true,
+                stepDetail = "Read ${lines.size} lines",
+                payload = JSONObject()
+                    .put("path", cleanPath)
+                    .put("lineCount", lines.size)
+                    .put("content", truncated),
+            )
+        }
+
+        override suspend fun writeFile(path: String, content: String): AgentToolResult {
+            flushInMemoryFiles()
+            val cleanPath = path.trim().replace('\\', '/').trimStart('/')
+            val target = repository.resolveProjectFile(projectId, cleanPath)
+                ?: return AgentToolResult(
+                    success = false,
+                    stepDetail = "Invalid path: $path",
+                    payload = JSONObject().put("error", "Path is outside project directory or empty: $path"),
+                )
+            val existed = target.exists()
+            repository.saveFile(projectId, cleanPath, content)
+            _projectFiles.value = repository.loadProjectFiles(projectId)
+            if (!cleanPath.startsWith("build/") && cleanPath != "project.json") {
+                openFile(cleanPath)
+            }
+            val verb = if (existed) "Updated" else "Created"
+            return AgentToolResult(
+                success = true,
+                stepDetail = "$verb ${content.lines().size} lines",
+                payload = JSONObject()
+                    .put("status", verb.lowercase())
+                    .put("path", cleanPath)
+                    .put("lineCount", content.lines().size),
+            )
+        }
+
+        override suspend fun editFile(path: String, oldText: String, newText: String): AgentToolResult {
+            flushInMemoryFiles()
+            val cleanPath = path.trim().replace('\\', '/').trimStart('/')
+            val target = repository.resolveProjectFile(projectId, cleanPath)
+                ?: return AgentToolResult(
+                    success = false,
+                    stepDetail = "Invalid path: $path",
+                    payload = JSONObject().put("error", "Path is outside project directory or empty: $path"),
+                )
+            if (!target.exists() || !target.isFile) {
+                return AgentToolResult(
+                    success = false,
+                    stepDetail = "File not found: $cleanPath",
+                    payload = JSONObject().put("error", "File does not exist: $cleanPath"),
+                )
+            }
+            val current = withContext(Dispatchers.IO) { target.readText() }
+            val normalizedCurrent = current.replace("\r\n", "\n")
+            val normalizedOld = oldText.replace("\r\n", "\n")
+            val normalizedNew = newText.replace("\r\n", "\n")
+
+            if (normalizedOld.isEmpty()) {
+                return AgentToolResult(
+                    success = false,
+                    stepDetail = "Empty old_text",
+                    payload = JSONObject().put("error", "old_text must not be empty. Use write_file for full replacements."),
+                )
+            }
+
+            val firstIdx = normalizedCurrent.indexOf(normalizedOld)
+            if (firstIdx < 0) {
+                return AgentToolResult(
+                    success = false,
+                    stepDetail = "Snippet not found in $cleanPath",
+                    payload = JSONObject().put(
+                        "error",
+                        "old_text was not found in $cleanPath. Call read_file first to verify exact text, or use write_file.",
+                    ),
+                )
+            }
+            val secondIdx = normalizedCurrent.indexOf(normalizedOld, startIndex = firstIdx + normalizedOld.length)
+            if (secondIdx >= 0) {
+                return AgentToolResult(
+                    success = false,
+                    stepDetail = "Multiple matches in $cleanPath",
+                    payload = JSONObject().put(
+                        "error",
+                        "old_text matched multiple locations in $cleanPath. Include more surrounding lines to make it unique.",
+                    ),
+                )
+            }
+
+            val updated = normalizedCurrent.replaceFirst(normalizedOld, normalizedNew)
+            repository.saveFile(projectId, cleanPath, updated)
+            _projectFiles.value = repository.loadProjectFiles(projectId)
+            if (!cleanPath.startsWith("build/") && cleanPath != "project.json") {
+                openFile(cleanPath)
+            }
+            return AgentToolResult(
+                success = true,
+                stepDetail = "Edited ${newText.lines().size} line(s)",
+                payload = JSONObject()
+                    .put("status", "edited")
+                    .put("path", cleanPath),
+            )
+        }
+
+        override suspend fun deleteFile(path: String): AgentToolResult {
+            flushInMemoryFiles()
+            val cleanPath = path.trim().replace('\\', '/').trimStart('/')
+            if (cleanPath == "AndroidManifest.xml" || cleanPath == "project.json") {
+                return AgentToolResult(
+                    success = false,
+                    stepDetail = "Protected file: $cleanPath",
+                    payload = JSONObject().put("error", "$cleanPath cannot be deleted."),
+                )
+            }
+            val target = repository.resolveProjectFile(projectId, cleanPath)
+                ?: return AgentToolResult(
+                    success = false,
+                    stepDetail = "Invalid path: $path",
+                    payload = JSONObject().put("error", "Path is outside project directory: $path"),
+                )
+            if (!target.exists()) {
+                return AgentToolResult(
+                    success = false,
+                    stepDetail = "File not found: $cleanPath",
+                    payload = JSONObject().put("error", "File does not exist: $cleanPath"),
+                )
+            }
+            repository.deleteFile(projectId, cleanPath)
+            closeTab(cleanPath)
+            _projectFiles.value = repository.loadProjectFiles(projectId)
+            return AgentToolResult(
+                success = true,
+                stepDetail = "Deleted $cleanPath",
+                payload = JSONObject().put("status", "deleted").put("path", cleanPath),
+            )
+        }
+
+        override suspend fun searchFiles(query: String): AgentToolResult {
+            flushInMemoryFiles()
+            val needle = query.trim()
+            if (needle.isEmpty()) {
+                return AgentToolResult(
+                    success = false,
+                    stepDetail = "Empty search query",
+                    payload = JSONObject().put("error", "Search query cannot be empty."),
+                )
+            }
+            val paths = repository.listAllProjectPaths(projectId, includeBuild = false)
+            val matches = JSONArray()
+            withContext(Dispatchers.IO) {
+                for (relPath in paths) {
+                    if (matches.length() >= 50) break
+                    val file = repository.resolveProjectFile(projectId, relPath) ?: continue
+                    file.readLines().forEachIndexed { idx, lineText ->
+                        if (matches.length() < 50 && lineText.contains(needle, ignoreCase = true)) {
+                            matches.put(
+                                JSONObject()
+                                    .put("path", relPath)
+                                    .put("line", idx + 1)
+                                    .put("text", lineText.trim().take(160)),
+                            )
+                        }
+                    }
+                }
+            }
+            return AgentToolResult(
+                success = true,
+                stepDetail = "${matches.length()} match(es)",
+                payload = JSONObject()
+                    .put("query", needle)
+                    .put("matches", matches),
+            )
+        }
+
+        override suspend fun buildApk(): AgentToolResult {
+            flushInMemoryFiles()
+            _isBuilding.value = true
+            _liveLogs.value = listOf("Gemini triggered offline APK build...")
+            _lastBuildResult.value = null
+
+            val result = try {
+                apkBuilder.buildProject(
+                    projectDir = repository.getProjectDir(projectId),
+                    packageName = packageName,
+                    onProgress = { line ->
+                        _liveLogs.value = _liveLogs.value + line
+                    },
+                )
+            } finally {
+                _isBuilding.value = false
+            }
+
+            _lastBuildResult.value = result
+            repository.recordBuildResult(projectId, result.success, result.apkSizeBytes)
+            _projects.value = repository.listProjects()
+            _activeProject.value = _projects.value.find { it.id == projectId }
+
+            val diagArray = JSONArray().apply {
+                result.diagnostics.take(25).forEach { d ->
+                    put(
+                        JSONObject()
+                            .put("severity", d.severity.name)
+                            .put("filePath", d.filePath)
+                            .put("line", d.line)
+                            .put("message", d.message),
+                    )
+                }
+            }
+            val summary = if (result.success) {
+                "APK built in ${result.durationMs}ms (${result.apkSizeBytes / 1024} KB)"
+            } else {
+                "Failed with ${result.diagnostics.size} diagnostic(s)"
+            }
+            return AgentToolResult(
+                success = result.success,
+                stepDetail = summary,
+                payload = JSONObject()
+                    .put("success", result.success)
+                    .put("durationMs", result.durationMs)
+                    .put("apkSizeBytes", result.apkSizeBytes)
+                    .put("compiledClassCount", result.compiledClassCount)
+                    .put("diagnostics", diagArray)
+                    .put("logs", JSONArray().apply { result.logs.takeLast(20).forEach { put(it) } }),
             )
         }
     }

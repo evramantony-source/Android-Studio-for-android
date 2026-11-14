@@ -1,6 +1,8 @@
 package com.example.ui.panels
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,10 +24,14 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AutoAwesome
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.ErrorOutline
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Key
+import androidx.compose.material.icons.filled.StopCircle
 import androidx.compose.material.icons.filled.Visibility
 import androidx.compose.material.icons.filled.VisibilityOff
 import androidx.compose.material3.AlertDialog
@@ -54,6 +60,8 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.ai.AgentStep
+import com.example.ai.AgentStepStatus
 import com.example.ai.AiUiState
 import com.example.ai.ChatMessage
 import com.example.ai.GEMINI_MODEL_ID
@@ -70,6 +78,7 @@ fun GeminiPanel(
     messages: List<ChatMessage>,
     aiState: AiUiState,
     onSendPrompt: (String) -> Unit,
+    onStopGemini: () -> Unit,
     onSaveApiKey: (String) -> Unit,
     onApplyCode: (SuggestedCodeBlock) -> Unit,
     onClearChat: () -> Unit,
@@ -84,7 +93,7 @@ fun GeminiPanel(
         GeminiCodeAssistant.resolveApiKey(customApiKey).isNotEmpty()
     }
 
-    LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length) {
+    LaunchedEffect(messages.size, messages.lastOrNull()?.text?.length, messages.lastOrNull()?.steps?.size) {
         if (messages.isNotEmpty()) {
             listState.animateScrollToItem(messages.lastIndex)
         }
@@ -112,7 +121,7 @@ fun GeminiPanel(
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Gemini in Studio",
+                        text = "Gemini Agent",
                         style = MaterialTheme.typography.titleMedium,
                     )
                     Text(
@@ -121,8 +130,8 @@ fun GeminiPanel(
                             append(" • ")
                             when {
                                 !hasEffectiveKey -> append("API key needed")
-                                activeFileName != null -> append(activeFileName)
-                                else -> append("Ready")
+                                activeFileName != null -> append("Auto-edit • $activeFileName")
+                                else -> append("Auto-edit ready")
                             }
                         },
                         style = MaterialTheme.typography.labelSmall,
@@ -172,9 +181,9 @@ fun GeminiPanel(
                 if (diagnostics.isNotEmpty()) {
                     AssistChip(
                         onClick = {
-                            onSendPrompt("Fix the build errors in this file and return the corrected full Java code.")
+                            onSendPrompt("Inspect the build errors, edit the broken files directly, and rebuild the APK until it succeeds.")
                         },
-                        label = { Text("Fix Build Errors (${diagnostics.size})") },
+                        label = { Text("Auto-Fix Errors (${diagnostics.size})") },
                         leadingIcon = {
                             Icon(Icons.Default.ErrorOutline, contentDescription = null, modifier = Modifier.size(16.dp))
                         },
@@ -182,21 +191,21 @@ fun GeminiPanel(
                 }
                 AssistChip(
                     onClick = {
-                        onSendPrompt("Explain what the active file does and suggest improvements.")
+                        onSendPrompt("Inspect the project files and explain the app architecture.")
                     },
-                    label = { Text("Explain File") },
+                    label = { Text("Inspect Project") },
                 )
                 AssistChip(
                     onClick = {
-                        onSendPrompt("Add a dark-themed Settings / About AlertDialog button to MainActivity.java.")
+                        onSendPrompt("Add a dark-themed Settings / About AlertDialog button to MainActivity.java and rebuild the APK.")
                     },
-                    label = { Text("Add Dialog") },
+                    label = { Text("Add Dialog & Build") },
                 )
                 AssistChip(
                     onClick = {
-                        onSendPrompt("Refactor the active Java file to be cleaner and add helpful comments.")
+                        onSendPrompt("Refactor the active Java file cleanly, keep behavior identical, and verify with build_apk.")
                     },
-                    label = { Text("Refactor") },
+                    label = { Text("Refactor & Build") },
                 )
             }
 
@@ -228,7 +237,7 @@ fun GeminiPanel(
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 )
                                 Text(
-                                    text = "Add your Google AI Studio Gemini API key to use $GEMINI_MODEL_ID directly from your phone, or set GEMINI_API_KEY in AI Studio / GitHub Secrets.",
+                                    text = "Add your Google AI Studio Gemini API key to use $GEMINI_MODEL_ID autonomously on your device, or set GEMINI_API_KEY in AI Studio / GitHub Secrets.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSecondaryContainer,
                                 )
@@ -257,12 +266,12 @@ fun GeminiPanel(
                                 verticalArrangement = Arrangement.spacedBy(6.dp),
                             ) {
                                 Text(
-                                    text = "Android Java Copilot ($GEMINI_MODEL_ID)",
+                                    text = "Autonomous Coding Agent ($GEMINI_MODEL_ID)",
                                     style = MaterialTheme.typography.titleMedium,
                                     color = MaterialTheme.colorScheme.primary,
                                 )
                                 Text(
-                                    text = "Ask Gemini to generate Activities, custom Canvas Views, XML strings, or fix ECJ compiler errors. Code blocks include a one-tap Apply button.",
+                                    text = "Gemini reads, creates, edits, and deletes any project file automatically without asking permission, compiles the APK to check its work, and shows every step live.",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
@@ -321,31 +330,40 @@ fun GeminiPanel(
                 OutlinedTextField(
                     value = promptInput,
                     onValueChange = { promptInput = it },
-                    placeholder = { Text("Ask $GEMINI_MODEL_ID to write or fix code...") },
+                    placeholder = { Text("Tell Gemini what to build or change...") },
                     maxLines = 3,
                     modifier = Modifier
                         .weight(1f)
                         .testTag("gemini_prompt_input"),
                 )
                 val isBusy = aiState is AiUiState.Streaming
-                IconButton(
-                    onClick = {
-                        if (!hasEffectiveKey) {
-                            showApiKeyDialog = true
-                            return@IconButton
-                        }
-                        val p = promptInput.trim()
-                        if (p.isNotEmpty() && !isBusy) {
-                            promptInput = ""
-                            onSendPrompt(p)
-                        }
-                    },
-                    enabled = promptInput.isNotBlank() && !isBusy,
-                    modifier = Modifier.testTag("gemini_send_button"),
-                ) {
-                    if (isBusy) {
-                        CircularProgressIndicator(modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
-                    } else {
+                if (isBusy) {
+                    IconButton(
+                        onClick = onStopGemini,
+                        modifier = Modifier.testTag("gemini_stop_button"),
+                    ) {
+                        Icon(
+                            Icons.Default.StopCircle,
+                            contentDescription = "Stop Gemini agent",
+                            tint = MaterialTheme.colorScheme.error,
+                        )
+                    }
+                } else {
+                    IconButton(
+                        onClick = {
+                            if (!hasEffectiveKey) {
+                                showApiKeyDialog = true
+                                return@IconButton
+                            }
+                            val p = promptInput.trim()
+                            if (p.isNotEmpty()) {
+                                promptInput = ""
+                                onSendPrompt(p)
+                            }
+                        },
+                        enabled = promptInput.isNotBlank(),
+                        modifier = Modifier.testTag("gemini_send_button"),
+                    ) {
                         Icon(Icons.AutoMirrored.Filled.Send, contentDescription = "Send prompt to Gemini")
                     }
                 }
@@ -459,6 +477,8 @@ private fun ChatBubble(
         MaterialTheme.colorScheme.onSurface
     }
 
+    var stepsExpanded by remember(message.id) { mutableStateOf(true) }
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = if (message.isUser) Alignment.End else Alignment.Start,
@@ -472,15 +492,26 @@ private fun ChatBubble(
                 modifier = Modifier.padding(12.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
             ) {
+                if (message.steps.isNotEmpty()) {
+                    AgentStepsCard(
+                        steps = message.steps,
+                        isRunning = message.isStreaming,
+                        expanded = stepsExpanded,
+                        onToggleExpanded = { stepsExpanded = !stepsExpanded },
+                    )
+                }
+
                 if (message.text.isEmpty() && message.isStreaming) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Text("Thinking...", style = MaterialTheme.typography.bodyMedium)
+                    if (message.steps.isEmpty()) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
+                            Text("Working...", style = MaterialTheme.typography.bodyMedium)
+                        }
                     }
-                } else {
+                } else if (message.text.isNotEmpty()) {
                     Text(
                         text = message.text,
                         style = MaterialTheme.typography.bodyMedium,
@@ -538,6 +569,140 @@ private fun ChatBubble(
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.onBackground,
                                 )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AgentStepsCard(
+    steps: List<AgentStep>,
+    isRunning: Boolean,
+    expanded: Boolean,
+    onToggleExpanded: () -> Unit,
+) {
+    val activeStep = steps.lastOrNull { it.status == AgentStepStatus.RUNNING }
+    val failedCount = steps.count { it.status == AgentStepStatus.FAILED }
+    Surface(
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shape = RoundedCornerShape(10.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("agent_steps_card"),
+    ) {
+        Column(modifier = Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onToggleExpanded)
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                when {
+                    isRunning && activeStep != null -> {
+                        CircularProgressIndicator(modifier = Modifier.size(14.dp), strokeWidth = 2.dp)
+                    }
+                    failedCount > 0 -> {
+                        Icon(
+                            Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                    else -> {
+                        Icon(
+                            Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.secondary,
+                            modifier = Modifier.size(16.dp),
+                        )
+                    }
+                }
+                Text(
+                    text = if (isRunning && activeStep != null) {
+                        activeStep.title
+                    } else {
+                        "Agent Steps (${steps.size})"
+                    },
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                    contentDescription = if (expanded) "Collapse steps" else "Expand steps",
+                    modifier = Modifier.size(18.dp),
+                )
+            }
+
+            AnimatedVisibility(visible = expanded) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+                    steps.forEach { step ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.Top,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier.padding(top = 2.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                when (step.status) {
+                                    AgentStepStatus.RUNNING -> CircularProgressIndicator(
+                                        modifier = Modifier.size(13.dp),
+                                        strokeWidth = 2.dp,
+                                    )
+                                    AgentStepStatus.COMPLETED -> Icon(
+                                        Icons.Default.CheckCircle,
+                                        contentDescription = "Completed",
+                                        tint = MaterialTheme.colorScheme.secondary,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                    AgentStepStatus.FAILED -> Icon(
+                                        Icons.Default.ErrorOutline,
+                                        contentDescription = "Failed",
+                                        tint = MaterialTheme.colorScheme.error,
+                                        modifier = Modifier.size(14.dp),
+                                    )
+                                }
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = step.title,
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Medium,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                if (step.detail.isNotBlank()) {
+                                    Text(
+                                        text = step.detail,
+                                        fontFamily = JetBrainsMonoFontFamily,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = if (step.status == AgentStepStatus.FAILED) {
+                                            MaterialTheme.colorScheme.error
+                                        } else {
+                                            MaterialTheme.colorScheme.onSurfaceVariant
+                                        },
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
                             }
                         }
                     }
